@@ -18,3 +18,5 @@ pip install diffusers==0.13.0
 
 pip install info-nce-pytorch==0.1.0
 pip install pytorch-msssim
+
+pip install pyvtools

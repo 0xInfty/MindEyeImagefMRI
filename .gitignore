@@ -14,3 +14,5 @@ src/evals-*
 **/results/
 **/data/
 **/dirs.json
+
+**/*.ipynb

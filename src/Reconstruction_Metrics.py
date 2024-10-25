@@ -1,18 +1,10 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
+# %%
 # # Code to convert this notebook to .py if you want to run it via command line or with Slurm
 # from subprocess import call
 # command = "jupyter nbconvert Reconstruction_Metrics.ipynb --to python"
 # call(command,shell=True)
 
-
-# In[2]:
-
-
+# %%
 import os
 import sys
 import json
@@ -38,19 +30,17 @@ seed=42
 utils.seed_everything(seed=seed)
 
 if utils.is_interactive():
-    get_ipython().run_line_magic('load_ext', 'autoreload')
-    get_ipython().run_line_magic('autoreload', '2')
+    %load_ext autoreload
+    %autoreload 2
 
 from models import Clipper
 clip_extractor = Clipper("ViT-L/14", hidden_state=False, norm_embs=True, device=device)
 imsize = 512
 
-
+# %% [markdown]
 # # Configurations
 
-# In[4]:
-
-
+# %%
 # if running this interactively, can specify jupyter_args here for argparser to use
 if utils.is_interactive():
     # Example use
@@ -59,10 +49,7 @@ if utils.is_interactive():
     jupyter_args = jupyter_args.split()
     print(jupyter_args)
 
-
-# In[5]:
-
-
+# %%
 parser = argparse.ArgumentParser(description="Model Training Configuration")
 parser.add_argument(
     "--recon_path", type=str,
@@ -82,10 +69,7 @@ else:
 for attribute_name in vars(args).keys():
     globals()[attribute_name] = getattr(args, attribute_name)
 
-
-# In[6]:
-
-
+# %%
 all_brain_recons = torch.load(f'{recon_path}')
 all_images = torch.load(f'{all_images_path}')
 
@@ -95,12 +79,10 @@ print(all_brain_recons.shape)
 all_images = all_images.to(device)
 all_brain_recons = all_brain_recons.to(device).to(all_images.dtype).clamp(0,1)
 
-
+# %% [markdown]
 # # Display reconstructions next to ground truth images
 
-# In[8]:
-
-
+# %%
 imsize = 256
 all_images = transforms.Resize((imsize,imsize))(all_images)
 all_brain_recons = transforms.Resize((imsize,imsize))(all_brain_recons)
@@ -129,12 +111,10 @@ def show(imgs,figsize):
 grid = make_grid(all_interleaved, nrow=10, padding=2)
 show(grid,figsize=(20,16))
 
-
+# %% [markdown]
 # # 2-Way Identification
 
-# In[9]:
-
-
+# %%
 from torchvision.models.feature_extraction import create_feature_extractor, get_graph_node_names
 
 @torch.no_grad()
@@ -161,12 +141,10 @@ def two_way_identification(all_brain_recons, all_images, model, preprocess, feat
     else:
         return success_cnt, len(all_images)-1
 
-
+# %% [markdown]
 # ## PixCorr
 
-# In[10]:
-
-
+# %%
 preprocess = transforms.Compose([
     transforms.Resize(425, interpolation=transforms.InterpolationMode.BILINEAR),
 ])
@@ -186,12 +164,10 @@ corrmean = corrsum / 982
 pixcorr = corrmean
 print(pixcorr)
 
-
+# %% [markdown]
 # ## SSIM
 
-# In[11]:
-
-
+# %%
 # see https://github.com/zijin-gu/meshconv-decoding/issues/3
 from skimage.color import rgb2gray
 from skimage.metrics import structural_similarity as ssim
@@ -212,12 +188,10 @@ for im,rec in tqdm(zip(img_gray,recon_gray),total=len(all_images)):
 ssim = np.mean(ssim_score)
 print(ssim)
 
-
+# %% [markdown]
 # ### AlexNet
 
-# In[12]:
-
-
+# %%
 from torchvision.models import alexnet, AlexNet_Weights
 alex_weights = AlexNet_Weights.IMAGENET1K_V1
 
@@ -245,12 +219,10 @@ all_per_correct = two_way_identification(all_brain_recons.to(device).float(), al
 alexnet5 = np.mean(all_per_correct)
 print(f"2-way Percent Correct: {alexnet5:.4f}")
 
-
+# %% [markdown]
 # ### InceptionV3
 
-# In[13]:
-
-
+# %%
 from torchvision.models import inception_v3, Inception_V3_Weights
 weights = Inception_V3_Weights.DEFAULT
 inception_model = create_feature_extractor(inception_v3(weights=weights), 
@@ -270,12 +242,10 @@ all_per_correct = two_way_identification(all_brain_recons, all_images,
 inception = np.mean(all_per_correct)
 print(f"2-way Percent Correct: {inception:.4f}")
 
-
+# %% [markdown]
 # ### CLIP
 
-# In[14]:
-
-
+# %%
 import clip
 clip_model, preprocess = clip.load("ViT-L/14", device=device)
 
@@ -290,12 +260,10 @@ all_per_correct = two_way_identification(all_brain_recons, all_images,
 clip_ = np.mean(all_per_correct)
 print(f"2-way Percent Correct: {clip_:.4f}")
 
-
+# %% [markdown]
 # ### Efficient Net
 
-# In[15]:
-
-
+# %%
 from torchvision.models import efficientnet_b1, EfficientNet_B1_Weights
 weights = EfficientNet_B1_Weights.DEFAULT
 eff_model = create_feature_extractor(efficientnet_b1(weights=weights), 
@@ -317,12 +285,10 @@ fake = fake.reshape(len(fake),-1).cpu().numpy()
 effnet = np.array([sp.spatial.distance.correlation(gt[i],fake[i]) for i in range(len(gt))]).mean()
 print("Distance:",effnet)
 
-
+# %% [markdown]
 # ### SwAV
 
-# In[16]:
-
-
+# %%
 swav_model = torch.hub.load('facebookresearch/swav:main', 'resnet50')
 swav_model = create_feature_extractor(swav_model, 
                                     return_nodes=['avgpool']).to(device)
@@ -342,12 +308,10 @@ fake = fake.reshape(len(fake),-1).cpu().numpy()
 swav = np.array([sp.spatial.distance.correlation(gt[i],fake[i]) for i in range(len(gt))]).mean()
 print("Distance:",swav)
 
-
+# %% [markdown]
 # # Display in table
 
-# In[34]:
-
-
+# %%
 # Create a dictionary to store variable names and their corresponding values
 data = {
     "Metric": ["PixCorr", "SSIM", "AlexNet(2)", "AlexNet(5)", "InceptionV3", "CLIP", "EffNet-B", "SwAV"],
@@ -360,4 +324,5 @@ print(df.to_string(index=False))
 if not utils.is_interactive():
     # save table to txt file
     df.to_csv(f'{recon_path[:-3]}.csv', sep='\t', index=False)
+
 

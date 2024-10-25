@@ -9,3 +9,7 @@
 *.pth
 src/evals
 src/evals-*
+
+models/
+results/
+data/

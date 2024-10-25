@@ -1,20 +1,13 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
+# %%
 # # Code to convert this notebook to .py if you want to run it via command line or with Slurm
 # from subprocess import call
 # command = "jupyter nbconvert Train_MindEye.ipynb --to python"
 # call(command,shell=True)
 
-
+# %% [markdown]
 # # Import packages & functions
 
-# In[2]:
-
-
+# %%
 import os
 import sys
 import json
@@ -32,6 +25,8 @@ torch.backends.cuda.matmul.allow_tf32 = True
 import utils
 from models import Clipper, BrainNetwork, BrainDiffusionPrior, BrainDiffusionPriorOld, VersatileDiffusionPriorNetwork
 
+import pyvtools.dirs as dirs
+
 # Multi-GPU config #
 from accelerate import Accelerator
 accelerator = Accelerator(split_batches=False,mixed_precision='fp16')  
@@ -48,31 +43,27 @@ world_size = accelerator.state.num_processes
 distributed = not accelerator.state.distributed_type == 'NO'
 print("distributed =",distributed, "num_devices =", num_devices, "local rank =", local_rank, "world size =", world_size)
 
-
+# %% [markdown]
 # # Configurations
 
-# In[3]:
-
-
+# %%
 # if running this interactively, can specify jupyter_args here for argparser to use
 if utils.is_interactive():
     # Example use
-    jupyter_args = "--data_path=/fsx/proj-medarc/fmri/natural-scenes-dataset \
-                    --model_name=test \
-                    --subj=1 --hidden --clip_variant=ViT-L/14 --batch_size=32 --n_samples_save=0 \
-                    --max_lr=3e-4 --mixup_pct=.33 --num_epochs=240 --ckpt_interval=5 --use_image_aug"
+    jupyter_args = f"--data_path={dirs.DATA_HOME} \
+                     --model_name=test \
+                     --subj=1 --hidden --clip_variant=ViT-L/14 --batch_size=32 --n_samples_save=0 \
+                     --max_lr=3e-4 --mixup_pct=.33 --num_epochs=240 --ckpt_interval=5 --use_image_aug"
     
     jupyter_args = jupyter_args.split()
-    print(jupyter_args)
+    print(jupyter_args[1:])
     
     from IPython.display import clear_output # function to clear print outputs in cell
-    get_ipython().run_line_magic('load_ext', 'autoreload')
-    get_ipython().run_line_magic('autoreload', '2 # this allows you to change functions in models.py or utils.py and have this notebook automatically update with your revisions')
+    %load_ext autoreload 
+    %autoreload 2 
+    # this allows you to change functions in models.py or utils.py and have this notebook automatically update with your revisions
 
-
-# In[4]:
-
-
+# %%
 parser = argparse.ArgumentParser(description="Model Training Configuration")
 parser.add_argument(
     "--model_name", type=str, default="testing",
@@ -191,10 +182,7 @@ max_lr *= accelerator.num_processes
 # change num_epochs based on number of devices if using multi-gpu
 num_epochs *= accelerator.num_processes
 
-
-# In[5]:
-
-
+# %%
 outdir = os.path.abspath(f'../train_logs/{model_name}')
 if not os.path.exists(outdir):
     os.makedirs(outdir,exist_ok=True)
@@ -210,17 +198,14 @@ if use_image_aug:
         data_keys=["input"],
     )
 
-
+# %% [markdown]
 # # Prep models and data loaders
 
-# In[6]:
-
-
+# %%
 print('Pulling NSD webdataset data...')
 
 train_url = "{" + f"{data_path}/webdataset_avg_split/train/train_subj0{subj}_" + "{0..17}.tar," + f"{data_path}/webdataset_avg_split/val/val_subj0{subj}_0.tar" + "}"
 val_url = f"{data_path}/webdataset_avg_split/test/test_subj0{subj}_" + "{0..1}.tar"
-print(train_url,"\n",val_url)
 meta_url = f"{data_path}/webdataset_avg_split/metadata_subj0{subj}.json"
 num_train = 8559 + 300
 num_val = 982
@@ -244,10 +229,7 @@ train_dl, val_dl, num_train, num_val = utils.get_dataloaders(
     world_size=world_size,
 )
 
-
-# In[7]:
-
-
+# %%
 print('Creating Clipper...')
 clip_sizes = {"RN50": 1024, "ViT-L/14": 768, "ViT-B/32": 512, "ViT-H-14": 1024}
 clip_size = clip_sizes[clip_variant]
@@ -450,12 +432,10 @@ def save_ckpt(tag):
         
 print("\nDone with model preparations!")
 
-
+# %% [markdown]
 # # Weights and Biases
 
-# In[8]:
-
-
+# %%
 # params for wandb
 if local_rank==0 and wandb_log: # only use main process for wandb logging
     import wandb
@@ -505,12 +485,10 @@ if local_rank==0 and wandb_log: # only use main process for wandb logging
 else:
     wandb_log = False
 
-
+# %% [markdown]
 # # Main
 
-# In[9]:
-
-
+# %%
 epoch = 0
 losses, val_losses, lrs = [], [], []
 nce_losses, val_nce_losses = [], []
@@ -553,18 +531,12 @@ elif wandb_log:
         del checkpoint
 torch.cuda.empty_cache()
 
-
-# In[10]:
-
-
+# %%
 diffusion_prior, optimizer, train_dl, val_dl, lr_scheduler = accelerator.prepare(
 diffusion_prior, optimizer, train_dl, val_dl, lr_scheduler
 )
 
-
-# In[11]:
-
-
+# %%
 print(f"{model_name} starting with epoch {epoch} / {num_epochs}")
 progress_bar = tqdm(range(epoch,num_epochs), ncols=1200, disable=(local_rank!=0))
 
@@ -817,4 +789,5 @@ for epoch in progress_bar:
 print("\n===Finished!===\n")
 if not utils.is_interactive():
     sys.exit(0)
+
 

@@ -1,18 +1,10 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
+# %%
 # # Code to convert this notebook to .py if you want to run it via command line or with Slurm
 # from subprocess import call
 # command = "jupyter nbconvert Reconstructions.ipynb --to python"
 # call(command,shell=True)
 
-
-# In[2]:
-
-
+# %%
 import os
 import sys
 import json
@@ -34,33 +26,31 @@ print("device:",device)
 import utils
 from models import Clipper, OpenClipper, BrainNetwork, BrainDiffusionPrior, BrainDiffusionPriorOld, Voxel2StableDiffusionModel, VersatileDiffusionPriorNetwork
 
+import pyvtools.dirs as dirs
+
 if utils.is_interactive():
-    get_ipython().run_line_magic('load_ext', 'autoreload')
-    get_ipython().run_line_magic('autoreload', '2')
+    %load_ext autoreload
+    %autoreload 2
 
 seed=42
 utils.seed_everything(seed=seed)
 
-
+# %% [markdown]
 # # Configurations
 
-# In[2]:
-
-
+# %%
 # if running this interactively, can specify jupyter_args here for argparser to use
 if utils.is_interactive():
     # Example use
-    jupyter_args = "--data_path=/fsx/proj-medarc/fmri/natural-scenes-dataset \
-                    --subj=1 \
-                    --model_name=prior_257_final_subj01_bimixco_softclip_byol"
-    
+    jupyter_args = f"--data_path={dirs.DATA_HOME} \
+                     --subj=1 \
+                     --model_name=prior_257_final_subj01_bimixco_softclip_byol"
+    # "--data_path=/fsx/proj-medarc/fmri/natural-scenes-dataset \
+
     jupyter_args = jupyter_args.split()
-    print(jupyter_args)
+    print(jupyter_args[1:])
 
-
-# In[3]:
-
-
+# %%
 parser = argparse.ArgumentParser(description="Model Training Configuration")
 parser.add_argument(
     "--model_name", type=str, default="testing",
@@ -102,10 +92,7 @@ for attribute_name in vars(args).keys():
 if autoencoder_name=="None":
     autoencoder_name = None
 
-
-# In[4]:
-
-
+# %%
 if subj == 1:
     num_voxels = 15724
 elif subj == 2:
@@ -124,12 +111,11 @@ elif subj == 8:
     num_voxels = 14386
 print("subj",subj,"num_voxels",num_voxels)
 
-
-# In[5]:
-
-
-val_url = f"{data_path}/webdataset_avg_split/test/test_subj0{subj}_" + "{0..1}.tar"
-meta_url = f"{data_path}/webdataset_avg_split/metadata_subj0{subj}.json"
+# %%
+# val_url = f"{data_path}/webdataset_avg_split/test/test_subj0{subj}_" + "{0..1}.tar"
+# meta_url = f"{data_path}/webdataset_avg_split/metadata_subj0{subj}.json"
+val_url = f"{data_path}/test_subj0{subj}_" + "{0..1}.tar"
+meta_url = f"{data_path}/metadata_subj0{subj}.json"
 num_train = 8559 + 300
 num_val = 982
 batch_size = val_batch_size = 1
@@ -150,12 +136,10 @@ for val_i, (voxel, img_input, coco) in enumerate(val_dl):
     print("img_input.shape",img_input.shape)
     break
 
-
+# %% [markdown]
 # ## Load autoencoder
 
-# In[6]:
-
-
+# %%
 from models import Voxel2StableDiffusionModel
 
 outdir = f'../train_logs/{autoencoder_name}'
@@ -175,12 +159,10 @@ else:
     print("No valid path for low-level model specified; not using img2img!") 
     img2img_strength = 1
 
-
+# %% [markdown]
 # # Load VD pipe
 
-# In[12]:
-
-
+# %%
 print('Creating versatile diffusion reconstruction pipeline...')
 from diffusers import VersatileDiffusionDualGuidedPipeline, UniPCMultistepScheduler
 from diffusers.models import DualTransformer2DModel
@@ -216,12 +198,10 @@ unet = vd_pipe.image_unet
 vae = vd_pipe.vae
 noise_scheduler = vd_pipe.scheduler
 
-
+# %% [markdown]
 # ## Load Versatile Diffusion model
 
-# In[8]:
-
-
+# %%
 img_variations = False
 
 out_dim = 257 * 768
@@ -268,12 +248,10 @@ diffusion_prior.eval().to(device)
 diffusion_priors = [diffusion_prior]
 pass
 
-
+# %% [markdown]
 # ## Load Image Variations model
 
-# In[9]:
-
-
+# %%
 # img_variations = True
 
 # # CLS model
@@ -308,10 +286,7 @@ pass
 # diffusion_priors = [diffusion_prior]
 # pass
 
-
-# In[10]:
-
-
+# %%
 # from diffusers import AutoencoderKL, UNet2DConditionModel, UniPCMultistepScheduler
 
 # sd_cache_dir = '/fsx/home-paulscotti/.cache/huggingface/diffusers/models--lambdalabs--sd-image-variations-diffusers/snapshots/a2a13984e57db80adcc9e3f85d568dcccb9b29fc'
@@ -327,12 +302,10 @@ pass
 # noise_scheduler = UniPCMultistepScheduler.from_pretrained(sd_cache_dir, subfolder="scheduler")
 # num_inference_steps = 20
 
-
+# %% [markdown]
 # # Reconstruct one-at-a-time
 
-# In[13]:
-
-
+# %%
 print(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 retrieve = False
@@ -424,4 +397,5 @@ print(f'recon_path: {model_name}_recons_img2img{img2img_strength}_{recons_per_sa
 
 if not utils.is_interactive():
     sys.exit(0)
+
 

@@ -10,6 +10,7 @@
 src/evals
 src/evals-*
 
-models/
-results/
-data/
+**/models/
+**/results/
+**/data/
+**/dirs.json

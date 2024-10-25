@@ -19,10 +19,56 @@ from dalle2_pytorch.train_configs import DiffusionPriorNetworkConfig
 # vd prior
 from dalle2_pytorch.dalle2_pytorch import RotaryEmbedding, CausalTransformer, SinusoidalPosEmb, MLP, Rearrange, repeat, rearrange, prob_mask_like, LayerNorm, RelPosBias, Attention, FeedForward
 
-class Clipper(torch.nn.Module):
+class NeuralNetwork(torch.nn.Module):
+
+    def __init__(self, device=None):
+        super().__init__()
+        self.device = device
+        self._on_original_devices = True
+    
+    @property
+    def on_original_devices(self):
+        return self._on_original_devices
+    
+    def get_arg_devices(self, *args):
+        devices = []
+        if self.device is not None:
+            for arg in args:
+                try: devices.append(arg.get_device())
+                except: devices.append(None)
+        else: devices = [None]*len(args)
+        return devices
+
+    def switch_arg_devices(self, args, devices):
+        if self.device is not None:
+            moved_args = []
+            if self.on_original_devices:
+                for arg, dev in zip(args, devices):
+                    if dev is not None:
+                        moved_args.append( arg.to(self.device) )
+            else:
+                for arg, dev in zip(args, devices):
+                    if dev is not None:
+                        moved_args.append( arg.to(dev) )
+            self._on_original_devices = not self.on_original_devices
+        return args
+
+    def forward(self, *args, **kwargs):
+
+        devices = self.get_arg_devices(*args)
+        args = self.switch_arg_devices(args, devices)
+        
+        self._forward(*args, **kwargs)
+
+        args = self.switch_arg_devices(args, devices)
+
+    def _forward(self, *args, **kwargs):
+        return args
+
+class Clipper(NeuralNetwork):
     def __init__(self, clip_variant, clamp_embs=False, norm_embs=False,
                  hidden_state=False, device=torch.device('cpu')):
-        super().__init__()
+        super().__init__(device)
         assert clip_variant in ("RN50", "ViT-L/14", "ViT-B/32", "RN50x64"), \
             "clip_variant must be one of RN50, ViT-L/14, ViT-B/32, RN50x64"
         print(clip_variant, device)
@@ -66,7 +112,6 @@ class Clipper(torch.nn.Module):
         self.denormalize = transforms.Normalize((-self.mean / self.std).tolist(), (1.0 / self.std).tolist())
         self.clamp_embs = clamp_embs
         self.norm_embs = norm_embs
-        self.device= device
         
         def versatile_normalize_embeddings(encoder_output):
             embeds = encoder_output.last_hidden_state
@@ -168,9 +213,11 @@ class OpenClipper(torch.nn.Module):
             clip_emb = clip_emb.reshape(len(clip_emb),-1,1024)
         return clip_emb
     
-class BrainNetwork(nn.Module):
-    def __init__(self, out_dim=768, in_dim=15724, clip_size=768, h=4096, n_blocks=4, norm_type='ln', act_first=False, use_projector=True):
-        super().__init__()
+class BrainNetwork(NeuralNetwork):
+    def __init__(self, out_dim=768, in_dim=15724, clip_size=768, 
+                 h=4096, n_blocks=4, norm_type='ln', act_first=False, 
+                 use_projector=True, device=None):
+        super().__init__(device)
         norm_func = partial(nn.BatchNorm1d, num_features=h) if norm_type == 'bn' else partial(nn.LayerNorm, normalized_shape=h)
         act_fn = partial(nn.ReLU, inplace=True) if norm_type == 'bn' else nn.GELU
         act_and_norm = (act_fn, norm_func) if act_first else (norm_func, act_fn)
@@ -217,6 +264,9 @@ class BrainNetwork(nn.Module):
             # [N, 699192]
             x = x.reshape(x.shape[0], -1)
 
+        devices = self.get_arg_devices(x)
+        x, = self.switch_arg_devices([x], devices)
+
         x = self.lin0(x)  # bs, h
         residual = x
         for res_block in range(self.n_blocks):
@@ -227,6 +277,8 @@ class BrainNetwork(nn.Module):
         x = self.lin1(x)
         if self.use_projector:
             return x, self.projector(x.reshape(len(x), -1, self.clip_size))
+        
+        x, = self.switch_arg_devices([x], devices)
         return x
 
 class BrainDiffusionPriorOld(DiffusionPrior):

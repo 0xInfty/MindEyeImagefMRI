@@ -1,18 +1,10 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
+# %%
 # # Code to convert this notebook to .py if you want to run it via command line or with Slurm
 # from subprocess import call
 # command = "jupyter nbconvert Retrievals.ipynb --to python"
 # call(command,shell=True)
 
-
-# In[1]:
-
-
+# %%
 import os
 import cv2
 import sys
@@ -29,41 +21,41 @@ import webdataset as wds
 import PIL
 import argparse
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-local_rank = 0
-print("device:",device)
+cpu = torch.device("cpu")
+gpu_1 = torch.device("cuda:0")
+gpu_2 = torch.device("cuda:1")
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# print("device:",device)
 
 import utils
 from models import Clipper, BrainNetwork, BrainDiffusionPrior, BrainDiffusionPriorOld, Voxel2StableDiffusionModel, VersatileDiffusionPriorNetwork
 
 if utils.is_interactive():
-    get_ipython().run_line_magic('load_ext', 'autoreload')
-    get_ipython().run_line_magic('autoreload', '2')
+    %load_ext autoreload
+    %autoreload 2
 
 seed=42
 utils.seed_everything(seed=seed)
 
+# %%
+import pyvtools.dirs as dirs
 
+# %% [markdown]
 # # Configurations
 
-# In[3]:
-
-
+# %%
 # if running this interactively, can specify jupyter_args here for argparser to use
 if utils.is_interactive():
     # Example use
-    jupyter_args = "--data_path=/fsx/proj-medarc/fmri/natural-scenes-dataset \
-                    --subj=1 \
-                    --model_name=prior_257_final_subj01_bimixco_softclip_byol\
-                    --model_name2=prior_1x768_final_subj01_bimixco_softclip_byol"
+    jupyter_args = f"--data_path={dirs.DATA_HOME} \
+                     --subj=1 \
+                     --model_name=prior_257_final_subj01_bimixco_softclip_byol\
+                     --model_name2=prior_1x768_final_subj01_bimixco_softclip_byol"
     
     jupyter_args = jupyter_args.split()
-    print(jupyter_args)
+    print(jupyter_args[1:])
 
-
-# In[4]:
-
-
+# %%
 parser = argparse.ArgumentParser(description="Model Training Configuration")
 parser.add_argument(
     "--model_name", type=str,
@@ -90,10 +82,7 @@ else:
 for attribute_name in vars(args).keys():
     globals()[attribute_name] = getattr(args, attribute_name)
 
-
-# In[5]:
-
-
+# %%
 subj = 1 #note: we only trained subjects 1 2 5 7, since they have data across full sessions
 if subj == 1:
     num_voxels = 15724
@@ -113,14 +102,17 @@ elif subj == 8:
     num_voxels = 14386
 print("subj",subj,"num_voxels",num_voxels)
 
+# %%
 
+
+# %% [markdown]
 # # LAION-5B Retrieval
 
-# In[6]:
-
-
-val_url = f"{data_path}/webdataset_avg_split/test/test_subj0{subj}_" + "{0..1}.tar"
-meta_url = f"{data_path}/webdataset_avg_split/metadata_subj0{subj}.json"
+# %%
+# val_url = f"{data_path}/webdataset_avg_split/test/test_subj0{subj}_" + "{0..1}.tar"
+# meta_url = f"{data_path}/webdataset_avg_split/metadata_subj0{subj}.json"
+val_url = f"{data_path}/test_subj0{subj}_" + "{0..1}.tar"
+meta_url = f"{data_path}/metadata_subj0{subj}.json"
 num_train = 8559 + 300
 num_val = 982
 batch_size = val_batch_size = 1
@@ -141,10 +133,7 @@ for val_i, (voxel, img_input, coco) in enumerate(val_dl):
     print("img_input.shape",img_input.shape)
     break
 
-
-# In[7]:
-
-
+# %%
 out_dim = 257 * 768
 clip_extractor = Clipper("ViT-L/14", hidden_state=True, norm_embs=True, device=device)
 voxel2clip_kwargs = dict(in_dim=num_voxels,out_dim=out_dim)
@@ -177,7 +166,7 @@ diffusion_prior = BrainDiffusionPrior(
     voxel2clip=voxel2clip,
 ).to(device)
 
-outdir = f'../train_logs/{model_name}'
+outdir = os.path.join(dirs.MODELS_HOME, model_name) # f'../train_logs/{model_name}'
 ckpt_path = os.path.join(outdir, f'last.pth')
 
 print("ckpt_path",ckpt_path)
@@ -189,10 +178,7 @@ diffusion_prior.eval().to(device)
 diffusion_priors = [diffusion_prior]
 pass
 
-
-# In[8]:
-
-
+# %%
 # CLS model
 out_dim = 768
 voxel2clip_kwargs = dict(in_dim=num_voxels,out_dim=out_dim)
@@ -212,7 +198,7 @@ diffusion_prior_cls = BrainDiffusionPriorOld.from_pretrained(
     voxel2clip_path=None,
 )
 
-outdir = f'../train_logs/{model_name2}'
+outdir = os.path.join(dirs.MODELS_HOME, model_name2) # f'../train_logs/{model_name2}'
 ckpt_path = os.path.join(outdir, f'last.pth')
 
 print("ckpt_path",ckpt_path)
@@ -223,10 +209,7 @@ diffusion_prior_cls.load_state_dict(state_dict,strict=False)
 diffusion_prior_cls.eval().to(device)
 pass
 
-
-# In[6]:
-
-
+# %%
 print(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 retrieve = True
@@ -287,19 +270,20 @@ print(f'recon_path: {model_name}_laion_retrievals')
 if not utils.is_interactive():
     sys.exit(0)
 
-
+# %% [markdown]
 # # Image/Brain retrieval
 
-# In[7]:
-
-
+# %%
 batch_size = 300 # same as used in mind_reader
 
-val_url = f"{data_path}/webdataset_avg_split/test/test_subj0{subj}_" + "{0..1}.tar"
-meta_url = f"{data_path}/webdataset_avg_split/metadata_subj0{subj}.json"
+val_url = f"{data_path}/test_subj0{subj}_" + "{0..1}.tar"
+meta_url = f"{data_path}/metadata_subj0{subj}.json"
+# val_url = f"{data_path}/webdataset_avg_split/test/test_subj0{subj}_" + "{0..1}.tar"
+# meta_url = f"{data_path}/webdataset_avg_split/metadata_subj0{subj}.json"
 num_train = 8559 + 300
 num_val = 982
 
+# val_batch_size = 100
 val_batch_size = 300
 val_loops = 30
 voxels_key = 'nsdgeneral.npy' # 1d inputs
@@ -318,17 +302,16 @@ for val_i, (voxel, img_input, coco) in enumerate(val_dl):
     print("voxel.shape",voxel.shape)
     print("img_input.shape",img_input.shape)
     break
+del val_i, voxel, img_input, coco
 
-
+# %% [markdown]
 # ### VD
 
-# In[8]:
-
-
+# %%
 out_dim = 257 * 768
-clip_extractor = Clipper("ViT-L/14", hidden_state=True, norm_embs=True, device=device)
+clip_extractor = Clipper("ViT-L/14", hidden_state=True, norm_embs=True, device=cpu)
 voxel2clip_kwargs = dict(in_dim=num_voxels,out_dim=out_dim)
-voxel2clip = BrainNetwork(**voxel2clip_kwargs)
+voxel2clip = BrainNetwork(**voxel2clip_kwargs, device=gpu_1).to(gpu_1)
 voxel2clip.requires_grad_(False)
 voxel2clip.eval()
 
@@ -345,7 +328,7 @@ prior_network = VersatileDiffusionPriorNetwork(
         heads=heads,
         causal=False,
         learned_query_mode="pos_emb"
-    ).to(device)
+    ).to(gpu_1)
 
 diffusion_prior = BrainDiffusionPrior(
     net=prior_network,
@@ -355,26 +338,26 @@ diffusion_prior = BrainDiffusionPrior(
     cond_drop_prob=0.2,
     image_embed_scale=None,
     voxel2clip=voxel2clip,
-).to(device)
+).to(gpu_2)
 
-outdir = f'../train_logs/{model_name}'
+outdir = os.path.join(dirs.MODELS_HOME, model_name) # f'../train_logs/{model_name}'
+# outdir = f'../train_logs/{model_name}'
 ckpt_path = os.path.join(outdir, f'last.pth')
 
-print("ckpt_path",ckpt_path)
-checkpoint = torch.load(ckpt_path, map_location=device)
+checkpoint = torch.load(ckpt_path, map_location=gpu_2)
 state_dict = checkpoint['model_state_dict']
 print("EPOCH: ",checkpoint['epoch'])
 diffusion_prior.load_state_dict(state_dict,strict=False)
-diffusion_prior.eval().to(device)
+diffusion_prior.eval().to(gpu_2)
+prior_network.eval().to(gpu_1)
+voxel2clip.eval().to(gpu_1)
 diffusion_priors = [diffusion_prior]
 pass
 
-
+# %% [markdown]
 # ### Img variations 
 
-# In[ ]:
-
-
+# %%
 # out_dim = 768
 # clip_extractor = Clipper("ViT-L/14", hidden_state=False, norm_embs=False, device=device)
 # voxel2clip_kwargs = dict(in_dim=num_voxels,out_dim=out_dim)
@@ -413,43 +396,43 @@ pass
 # diffusion_priors = [diffusion_prior]
 # pass
 
-
+# %% [markdown]
 # ## Retrieval on test set
 
-# In[9]:
-
-
+# %%
 percent_correct_fwds, percent_correct_bwds = [], []
 percent_correct_fwd, percent_correct_bwd = None, None
 
 for val_i, (voxel, img, coco) in enumerate(tqdm(val_dl,total=val_loops)):
+    voxel = voxel.to(gpu_1)
+    img = img.to(gpu_1)
     with torch.no_grad():
-        voxel = torch.mean(voxel,axis=1).to(device) # average across repetitions
+        voxel = torch.mean(voxel,axis=1).to(gpu_1) # average across repetitions
         # voxel = voxel[:,np.random.randint(3)].to(device) # random one of the single-trial samples
 
-        emb = clip_extractor.embed_image(img.to(device)).float() # CLIP-Image
+        emb = clip_extractor.embed_image(img).float() # CLIP-Image
         
         _, emb_ = diffusion_prior.voxel2clip(voxel.float()) # CLIP-Brain
+        del voxel, img
         
         # flatten if necessary
         emb = emb.reshape(len(emb),-1)
         emb_ = emb_.reshape(len(emb_),-1)
         
         # l2norm 
-        emb = nn.functional.normalize(emb,dim=-1)
-        emb_ = nn.functional.normalize(emb_,dim=-1)
+        emb = nn.functional.normalize(emb,dim=-1).to(gpu_1)
+        emb_ = nn.functional.normalize(emb_,dim=-1).to(gpu_1)
         
-        labels = torch.arange(len(emb)).to(device)
-        bwd_sim = utils.batchwise_cosine_similarity(emb,emb_)  # clip, brain
+        labels = torch.arange(len(emb)).to(gpu_1)
         fwd_sim = utils.batchwise_cosine_similarity(emb_,emb)  # brain, clip
+        # bwd_sim = utils.batchwise_cosine_similarity(emb,emb_)  # clip, brain
 
-        assert len(bwd_sim) == batch_size
+        # assert len(bwd_sim) == batch_size
         
         percent_correct_fwds = np.append(percent_correct_fwds, utils.topk(fwd_sim, labels,k=1).item())
-        percent_correct_bwds = np.append(percent_correct_bwds, utils.topk(bwd_sim, labels,k=1).item())
+        percent_correct_bwds = np.append(percent_correct_bwds, utils.topk(fwd_sim.T, labels,k=1).item())
             
-        if val_i==0:
-            print("Loop 0:",percent_correct_fwds, percent_correct_bwds)
+        print(percent_correct_fwds[-1], percent_correct_bwds[-1])
             
 percent_correct_fwd = np.mean(percent_correct_fwds)
 fwd_sd = np.std(percent_correct_fwds) / np.sqrt(len(percent_correct_fwds))
@@ -463,12 +446,9 @@ print(f"fwd percent_correct: {percent_correct_fwd:.4f} 95% CI: [{fwd_ci[0]:.4f},
 print(f"bwd percent_correct: {percent_correct_bwd:.4f} 95% CI: [{bwd_ci[0]:.4f},{bwd_ci[1]:.4f}]")
 
 fwd_sim = np.array(fwd_sim.cpu())
-bwd_sim = np.array(bwd_sim.cpu())
+# bwd_sim = np.array(bwd_sim.cpu())
 
-
-# In[ ]:
-
-
+# %%
 # SUBJ 1
 # fwd percent_correct: 0.9718 95% CI: [0.9698,0.9737]
 # bwd percent_correct: 0.9468 95% CI: [0.9435,0.9500]
@@ -485,11 +465,14 @@ bwd_sim = np.array(bwd_sim.cpu())
 # fwd percent_correct: 0.8941 95% CI: [0.8887,0.8995]
 # bwd percent_correct: 0.8582 95% CI: [0.8529,0.8636]
 
-
+# %% [markdown]
 # ## Image retrieval visualization
 
-# In[10]:
-
+# %%
+for val_i, (voxel, img, coco) in enumerate(tqdm(val_dl,total=val_loops)):
+    voxel = voxel.to(gpu_1)
+    img = img.to(gpu_1)
+    break
 
 print("Given Brain embedding, find correct Image embedding")
 fig, ax = plt.subplots(nrows=4, ncols=6, figsize=(11,12))
@@ -505,12 +488,10 @@ for trial in range(4):
 fig.tight_layout()
 plt.show()
 
-
+# %% [markdown]
 # ### Zebra example / Retrieval with batch size 982
 
-# In[14]:
-
-
+# %%
 device = 'cpu' # move to cpu to not OOM with all 982 samples
 clip_extractor0 = Clipper("ViT-L/14", hidden_state=True, norm_embs=True, device=device)
 diffusion_prior=diffusion_prior.to(device)
@@ -549,10 +530,7 @@ print(percent_correct_fwd, percent_correct_bwd)
 fwd_sim = fwd_sim.numpy()
 bwd_sim = bwd_sim.numpy()
 
-
-# In[20]:
-
-
+# %%
 zebra_indices = [891, 892, 893, 863, 833, 652, 516, 512, 498, 451, 331, 192, 129, 66]
 print("# zebras =", len(zebra_indices))
 fig, ax = plt.subplots(nrows=2, ncols=6, figsize=(11,5))
@@ -568,12 +546,10 @@ for trial,t in enumerate(zebra_indices[:2]):
 fig.tight_layout()
 plt.show()
 
-
+# %% [markdown]
 # ## Brain retrieval visualization
 
-# In[22]:
-
-
+# %%
 print("Given Image embedding, find correct Brain embedding")
 fig, ax = plt.subplots(nrows=4, ncols=6, figsize=(11,12))
 for trial in range(4):
@@ -581,10 +557,11 @@ for trial in range(4):
     ax[trial, 0].set_title("original\nimage")
     ax[trial, 0].axis("off")
     for attempt in range(5):
-        which = np.flip(np.argsort(bwd_sim[trial]))[attempt]
+        which = np.flip(np.argsort(fwd_sim.T[trial]))[attempt]
         ax[trial, attempt+1].imshow(utils.torch_to_Image(img[which]))
         ax[trial, attempt+1].set_title(f"Top {attempt+1}")
         ax[trial, attempt+1].axis("off")
 fig.tight_layout()
 plt.show()
+
 

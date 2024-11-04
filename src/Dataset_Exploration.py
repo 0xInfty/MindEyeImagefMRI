@@ -108,6 +108,8 @@ num_voxels = voxels_per_individual[subj-1]
 print("Subj", subj, "=> Num_voxels", num_voxels)
 
 # %%
+train_url = f"{data_path}/train_subj0{subj}_" + "{0..17}.tar"
+val_url = f"{data_path}/val_subj0{subj}_" + "{0..0}.tar"
 # test_url = f"{data_path}/webdataset_avg_split/test/test_subj0{subj}_" + "{0..1}.tar"
 test_url = f"{data_path}/test_subj0{subj}_" + "{0..1}.tar"
 # meta_url = f"{data_path}/webdataset_avg_split/metadata_subj0{subj}.json"
@@ -140,7 +142,43 @@ seed = 42 # Random seed picked in the original code
 utils.seed_everything(seed=seed)
 
 # %% [markdown]
-# ### Test dataset
+# ### Common neural networks
+
+# %% [markdown]
+# #### CLIP image encoder
+
+# %%
+clip_extractor = Clipper("ViT-L/14", hidden_state=True, norm_embs=True, device=device)
+
+# %% [markdown]
+# #### Brain encoder
+
+# %%
+voxel2clip_kwargs = dict(in_dim=num_voxels, out_dim=out_dim, use_projector=True, device=device)
+voxel2clip = BrainNetwork(**voxel2clip_kwargs)
+voxel2clip.requires_grad_(False)
+voxel2clip.eval()
+
+# %%
+ckpt_path = os.path.join(outdir, model_name, f'voxel2clip.pth')
+# ckpt_path = os.path.join(outdir, model_name, f'last.pth')
+
+checkpoint = torch.load(ckpt_path, map_location=device)
+state_dict = checkpoint['model']
+# state_dict = checkpoint['model_state_dict']
+print("Checkpoint's number of epochs: ", checkpoint['epoch'])
+
+# %%
+voxel2clip.load_state_dict(state_dict, strict=False)
+voxel2clip.eval().to(device)
+del state_dict, checkpoint
+
+# %%
+p = next(voxel2clip.named_parameters())
+p
+
+# %% [markdown]
+# ## Test dataset
 
 # %% [markdown]
 # #### One by one
@@ -210,40 +248,138 @@ for idx, (voxel, img_input, coco) in enumerate(test_dataloader):
 del idx, voxel, img_input, coco
 
 # %% [markdown]
-# ### Common neural networks
+# ## Test Embeddings
+
+# %%
+img_embeddings, brain_embeddings = [], []
+
+with torch.no_grad():
+    k = 0
+    for idx, (voxel, img, coco) in enumerate(tqdm(test_dataloader)):
+
+        if idx<3 and k<2:
+            print("Voxel's shape", voxel.shape)
+            print("Image's shape", img.shape)
+            vim.plot_images(*img[:3].cpu().detach().numpy().transpose(0,2,3,1))
+            mutils.plot_brain_signals(*voxel.cpu().detach().numpy()[:3])
+
+        voxel = torch.mean(voxel, axis=1).to(device) # average across repetitions
+        # voxel = voxel[:,np.random.randint(3)].to(device) # random one of the single-trial samples
+
+        emb_img = clip_extractor.embed_image(img.to(device)).float() # CLIP-Image
+        
+        _, emb_brain = voxel2clip(voxel.float()) # CLIP-Brain
+        
+        if idx<3 and k<2:
+            print("Averaged voxel's shape", voxel.shape)
+            print("Image embedding's shape", emb_img.shape)
+            print("Brain embedding's shape", emb_brain.shape)
+            vim.plot_images(*emb_img[:3].cpu().detach().numpy(), labels=["","Image embeddings",""])
+            vim.plot_images(*emb_brain[:3].cpu().detach().numpy(), labels=["","Brain embeddings",""])
+        
+        # Flatten if necessary
+        emb_img = emb_img.reshape(len(emb_img),-1)
+        emb_brain = emb_brain.reshape(len(emb_brain),-1)
+        
+        # # L2 normalization
+        # emb_img = nn.functional.normalize(emb_img, dim=-1)
+        # emb_brain = nn.functional.normalize(emb_brain, dim=-1)
+        
+        img_embeddings += list(emb_img.cpu().detach().numpy())
+        brain_embeddings += list(emb_brain.cpu().detach().numpy())
+            
+        k += 1
+        # break
+
+img_embeddings = np.array(img_embeddings)
+brain_embeddings = np.array(brain_embeddings)
+print("All image embedding's shape", img_embeddings.shape)
+print("All brain embedding's shape", brain_embeddings.shape)
 
 # %% [markdown]
-# #### CLIP image encoder
-
-# %%
-clip_extractor = Clipper("ViT-L/14", hidden_state=True, norm_embs=True, device=device)
+# ## Test Principal Components Analysis (PCA)
 
 # %% [markdown]
-# #### Brain encoder
+# ### Run without normalization
 
 # %%
-voxel2clip_kwargs = dict(in_dim=num_voxels, out_dim=out_dim, use_projector=True, device=device)
-voxel2clip = BrainNetwork(**voxel2clip_kwargs)
-voxel2clip.requires_grad_(False)
-voxel2clip.eval()
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings)
+
+img_pca_data = img_pca.transform(img_embeddings)
+print("Image data PCA shape", img_pca_data.shape)
 
 # %%
-ckpt_path = os.path.join(outdir, model_name, f'voxel2clip.pth')
-# ckpt_path = os.path.join(outdir, model_name, f'last.pth')
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings)
 
-checkpoint = torch.load(ckpt_path, map_location=device)
-state_dict = checkpoint['model']
-# state_dict = checkpoint['model_state_dict']
-print("Checkpoint's number of epochs: ", checkpoint['epoch'])
+brain_pca_data = brain_pca.transform(brain_embeddings)
+print("Brain data PCA shape", brain_pca_data.shape)
 
 # %%
-voxel2clip.load_state_dict(state_dict, strict=False)
-voxel2clip.eval().to(device)
-del state_dict, checkpoint
+plt.scatter(*img_pca_data.T, alpha=.3)
+plt.scatter(*brain_pca_data.T, alpha=.3)
+
+# %% [markdown]
+# ### Normalize after running
 
 # %%
-p = next(voxel2clip.named_parameters())
-p
+img_pca_data_norm = img_pca_data.T / np.mean(np.linalg.norm(img_pca_data, axis=1))
+brain_pca_data_norm = brain_pca_data.T / np.mean(np.linalg.norm(brain_pca_data, axis=1))
+
+# %%
+plt.scatter(*img_pca_data_norm, alpha=.3)
+plt.scatter(*brain_pca_data_norm, alpha=.3)
+
+# %% [markdown]
+# ### Normalize before running
+
+# %%
+img_embeddings_norm = img_embeddings / np.mean(np.linalg.norm(img_embeddings, axis=1))
+brain_embeddings_norm = brain_embeddings / np.mean(np.linalg.norm(brain_embeddings, axis=1))
+
+# %%
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings_norm)
+
+img_pca_data = img_pca.transform(img_embeddings_norm)
+print("Image data PCA shape", img_pca_data.shape)
+
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings_norm)
+
+brain_pca_data = brain_pca.transform(brain_embeddings_norm)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+plt.scatter(*img_pca_data.T, alpha=.3)
+plt.scatter(*brain_pca_data.T, alpha=.3)
+
+# %%
+out_dim * num_train * 32
+
+# %% [markdown]
+# ## Training dataset
+
+# %%
+train_data = wds.WebDataset(train_url, shardshuffle=False)\
+    .decode("torch")\
+    .rename(images="jpg;png", voxels=voxels_key, trial="trial.npy", coco="coco73k.npy", reps="num_uniques.npy")\
+    .to_tuple("voxels", "images", "coco")\
+    .batched(test_batch_size, partial=True)
+    # .with_epoch(test_loops)
+
+train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=None, shuffle=False)
+
+# Check that your data loader is working
+for idx, (voxel, img_input, coco) in enumerate(train_dataloader):
+    print("IDx", idx)
+    print("Voxel shape", voxel.shape)
+    print("Image shape", img_input.shape)
+    print("Coco IDX shape", coco.shape)
+    break
+del idx, voxel, img_input, coco
 
 # %% [markdown]
 # ## Embeddings
@@ -253,7 +389,7 @@ img_embeddings, brain_embeddings = [], []
 
 with torch.no_grad():
     k = 0
-    for idx, (voxel, img, coco) in enumerate(tqdm(test_dataloader)):
+    for idx, (voxel, img, coco) in enumerate(tqdm(train_dataloader)):
 
         if idx<3 and k<2:
             print("Voxel's shape", voxel.shape)
@@ -315,8 +451,8 @@ brain_pca_data = brain_pca.transform(brain_embeddings)
 print("Brain data PCA shape", brain_pca_data.shape)
 
 # %%
-plt.scatter(*img_pca_data.T, alpha=.3)
-plt.scatter(*brain_pca_data.T, alpha=.3)
+plt.scatter(*img_pca_data.T, alpha=.05)
+plt.scatter(*brain_pca_data.T, alpha=.05)
 
 # %% [markdown]
 # ### Normalize after running
@@ -326,8 +462,8 @@ img_pca_data_norm = img_pca_data.T / np.mean(np.linalg.norm(img_pca_data, axis=1
 brain_pca_data_norm = brain_pca_data.T / np.mean(np.linalg.norm(brain_pca_data, axis=1))
 
 # %%
-plt.scatter(*img_pca_data_norm, alpha=.3)
-plt.scatter(*brain_pca_data_norm, alpha=.3)
+plt.scatter(*img_pca_data_norm, alpha=.05)
+plt.scatter(*brain_pca_data_norm, alpha=.05)
 
 # %% [markdown]
 # ### Normalize before running
@@ -351,7 +487,7 @@ brain_pca_data = brain_pca.transform(brain_embeddings_norm)
 print("Brain data PCA shape", brain_pca_data.shape)
 
 # %%
-plt.scatter(*img_pca_data.T, alpha=.3)
-plt.scatter(*brain_pca_data.T, alpha=.3)
+plt.scatter(*img_pca_data.T, alpha=.05)
+plt.scatter(*brain_pca_data.T, alpha=.05)
 
 

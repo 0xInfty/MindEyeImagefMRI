@@ -1,10 +1,9 @@
 # %% [markdown]
-# # Core Retrieval
-# Try to isolate the CLIP image encoder and the brain encoder to run retrieval
+# # Dataset Exploration
+# Having isolatad the CLIP image encoder and the brain encoder...
 # 
-# Calculate similarity score with all elements in the test set for subject 1
-# - Find the 10 images that best match a brain signal
-# - Find the 10 brain signals that best match an image
+# 1. Calculate image and brain embeddings for the dataset
+# 1. Run PCA on the embeddings
 
 # %% [markdown]
 # ## What I understood from the code
@@ -34,19 +33,15 @@
 
 # %%
 import os
-import sys
 import json
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
+from sklearn import datasets, decomposition
 import torch
 import torch.nn as nn
-from torchvision import transforms
 from tqdm import tqdm
-from datetime import datetime
 import webdataset as wds
-import PIL
-import argparse
 
 import pyvtools.dirs as dirs
 import pyvtools.image as vim
@@ -128,9 +123,6 @@ num_test = metadata['totals']['test']
 # What is `num_train`? There are supposedly 24980 training samplesm not 8859. Mmm... It's close to 24980/3, but it's not exactly the same.
 
 # %%
-num_train
-
-# %%
 print(num_train*3)
 
 # %%
@@ -147,19 +139,65 @@ print("Device:", device)
 seed = 42 # Random seed picked in the original code
 utils.seed_everything(seed=seed)
 
-# %%
-test_batch_size
-
 # %% [markdown]
 # ### Test dataset
 
+# %% [markdown]
+# #### One by one
+
 # %%
-test_data = wds.WebDataset(test_url, resampled=True)\
+test_data = wds.WebDataset(test_url, shardshuffle=False)\
+    .decode("torch")\
+    .rename(images="jpg;png", voxels=voxels_key, trial="trial.npy", coco="coco73k.npy", reps="num_uniques.npy")\
+    .to_tuple("voxels", "images", "coco")
+
+test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=1, shuffle=False)
+
+# Check that your data loader is working
+for idx, (voxel, img_input, coco) in enumerate(test_dataloader):
+    print("IDx", idx)
+    print("Voxel shape", voxel.shape)
+    print("Input image shape", img_input.shape)
+    print("Coco IDX shape", coco.shape)
+    break
+# del idx, voxel, img_input, coco
+
+# %%
+vim.plot_image(img_input[0].cpu().detach().numpy().transpose(1,2,0))
+
+# %% [markdown]
+# #### Three at a time
+
+# %%
+test_data = wds.WebDataset(test_url, shardshuffle=False)\
+    .decode("torch")\
+    .rename(images="jpg;png", voxels=voxels_key, trial="trial.npy", coco="coco73k.npy", reps="num_uniques.npy")\
+    .to_tuple("voxels", "images", "coco")
+
+test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=3, shuffle=False)
+
+# Check that your data loader is working
+for idx, (voxel, img_input, coco) in enumerate(test_dataloader):
+    print("IDx", idx)
+    print("Voxel shape", voxel.shape)
+    print("Input image shape", img_input.shape)
+    print("Coco IDX shape", coco.shape)
+    break
+# del idx, voxel, img_input, coco
+
+# %%
+vim.plot_images(*img_input.cpu().detach().numpy().transpose(0,2,3,1))
+
+# %% [markdown]
+# ### Batches
+
+# %%
+test_data = wds.WebDataset(test_url, shardshuffle=False)\
     .decode("torch")\
     .rename(images="jpg;png", voxels=voxels_key, trial="trial.npy", coco="coco73k.npy", reps="num_uniques.npy")\
     .to_tuple("voxels", "images", "coco")\
-    .batched(test_batch_size, partial=False)\
-    .with_epoch(test_loops)
+    .batched(test_batch_size, partial=True)
+    # .with_epoch(test_loops)
 
 test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=None, shuffle=False)
 
@@ -167,8 +205,8 @@ test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=None, shuffl
 for idx, (voxel, img_input, coco) in enumerate(test_dataloader):
     print("IDx", idx)
     print("Voxel shape", voxel.shape)
-    print("Input image shape", img_input.shape)
-    break
+    print("Image shape", img_input.shape)
+    print("Coco IDX shape", coco.shape)
 del idx, voxel, img_input, coco
 
 # %% [markdown]
@@ -199,10 +237,6 @@ state_dict = checkpoint['model']
 print("Checkpoint's number of epochs: ", checkpoint['epoch'])
 
 # %%
-p = next(voxel2clip.named_parameters())
-p
-
-# %%
 voxel2clip.load_state_dict(state_dict, strict=False)
 voxel2clip.eval().to(device)
 del state_dict, checkpoint
@@ -212,14 +246,14 @@ p = next(voxel2clip.named_parameters())
 p
 
 # %% [markdown]
-# ## Test set retrieval
+# ## Embeddings
 
 # %%
-percents_correct_forwards, percents_correct_backwards = [], []
+img_embeddings, brain_embeddings = [], []
 
 with torch.no_grad():
     k = 0
-    for idx, (voxel, img, coco) in enumerate(tqdm(test_dataloader, total=test_loops)):
+    for idx, (voxel, img, coco) in enumerate(tqdm(test_dataloader)):
 
         if idx<3 and k<2:
             print("Voxel's shape", voxel.shape)
@@ -245,43 +279,79 @@ with torch.no_grad():
         emb_img = emb_img.reshape(len(emb_img),-1)
         emb_brain = emb_brain.reshape(len(emb_brain),-1)
         
-        # L2 normalization
-        emb_img = nn.functional.normalize(emb_img, dim=-1)
-        emb_brain = nn.functional.normalize(emb_brain, dim=-1)
+        # # L2 normalization
+        # emb_img = nn.functional.normalize(emb_img, dim=-1)
+        # emb_brain = nn.functional.normalize(emb_brain, dim=-1)
         
-        labels = torch.arange(len(emb_img)).to(device)
-        similarity = utils.batchwise_cosine_similarity(emb_brain, emb_img)  # Brain, CLIP
-
-        # similarity_backwards = utils.batchwise_cosine_similarity(emb_img, emb_brain)  # clip, brain
-        # similarity_forwards = utils.batchwise_cosine_similarity(emb_brain, emb_img)  # brain, clip
-        # print(np.any((similarity_backwards.cpu().detach().numpy().T != similarity_forwards.cpu().detach().numpy()).flatten()))
-
-        if idx<3 and k<2:
-            print("Similarity matrix's shape", similarity.shape)
-            vim.plot_image(similarity.cpu().detach().numpy(), 
-                            dpi=300, interpolation="none", colormap="magma")
-        
-        top1_forwards = utils.topk(similarity, labels, k=1).item()
-        top1_backwards = utils.topk(torch.transpose(similarity, 0, 1), labels, k=1).item()
-        print("Top-1 Accuracy per Brain Signal", top1_forwards*100, r"%")
-        print("Top-1 Accuracy per Image", top1_backwards*100, r"%")
-        
-        percents_correct_forwards.append(top1_forwards)
-        percents_correct_backwards.append(top1_backwards)
+        img_embeddings += list(emb_img.cpu().detach().numpy())
+        brain_embeddings += list(emb_brain.cpu().detach().numpy())
             
         k += 1
         # break
 
+img_embeddings = np.array(img_embeddings)
+brain_embeddings = np.array(brain_embeddings)
+print("All image embedding's shape", img_embeddings.shape)
+print("All brain embedding's shape", brain_embeddings.shape)
+
+# %% [markdown]
+# ## Principal Components Analysis (PCA)
+
+# %% [markdown]
+# ### Run without normalization
+
 # %%
-percent_correct_fwd = np.mean(percents_correct_forwards)
-fwd_sd = np.std(percents_correct_forwards) / np.sqrt(len(percents_correct_forwards))
-fwd_ci = stats.norm.interval(0.95, loc=percent_correct_fwd, scale=fwd_sd)
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings)
 
-percent_correct_bwd = np.mean(percents_correct_backwards)
-bwd_sd = np.std(percents_correct_backwards) / np.sqrt(len(percents_correct_backwards))
-bwd_ci = stats.norm.interval(0.95, loc=percent_correct_bwd, scale=bwd_sd)
+img_pca_data = img_pca.transform(img_embeddings)
+print("Image data PCA shape", img_pca_data.shape)
 
-print(f"fwd percent_correct: {percent_correct_fwd:.4f} 95% CI: [{fwd_ci[0]:.4f},{fwd_ci[1]:.4f}]")
-print(f"bwd percent_correct: {percent_correct_bwd:.4f} 95% CI: [{bwd_ci[0]:.4f},{bwd_ci[1]:.4f}]")
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings)
+
+brain_pca_data = brain_pca.transform(brain_embeddings)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+plt.scatter(*img_pca_data.T, alpha=.3)
+plt.scatter(*brain_pca_data.T, alpha=.3)
+
+# %% [markdown]
+# ### Normalize after running
+
+# %%
+img_pca_data_norm = img_pca_data.T / np.mean(np.linalg.norm(img_pca_data, axis=1))
+brain_pca_data_norm = brain_pca_data.T / np.mean(np.linalg.norm(brain_pca_data, axis=1))
+
+# %%
+plt.scatter(*img_pca_data_norm, alpha=.3)
+plt.scatter(*brain_pca_data_norm, alpha=.3)
+
+# %% [markdown]
+# ### Normalize before running
+
+# %%
+img_embeddings_norm = img_embeddings / np.mean(np.linalg.norm(img_embeddings, axis=1))
+brain_embeddings_norm = brain_embeddings / np.mean(np.linalg.norm(brain_embeddings, axis=1))
+
+# %%
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings_norm)
+
+img_pca_data = img_pca.transform(img_embeddings_norm)
+print("Image data PCA shape", img_pca_data.shape)
+
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings_norm)
+
+brain_pca_data = brain_pca.transform(brain_embeddings_norm)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+plt.scatter(*img_pca_data.T, alpha=.3)
+plt.scatter(*brain_pca_data.T, alpha=.3)
 
 

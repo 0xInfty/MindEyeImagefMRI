@@ -178,7 +178,10 @@ p = next(voxel2clip.named_parameters())
 p
 
 # %% [markdown]
-# ## Test dataset
+# ## Datasets
+
+# %% [markdown]
+# ### Test dataset
 
 # %% [markdown]
 # #### One by one
@@ -227,7 +230,7 @@ for idx, (voxel, img_input, coco) in enumerate(test_dataloader):
 vim.plot_images(*img_input.cpu().detach().numpy().transpose(0,2,3,1))
 
 # %% [markdown]
-# ### Batches
+# #### Batches
 
 # %%
 test_data = wds.WebDataset(test_url, shardshuffle=False)\
@@ -248,119 +251,7 @@ for idx, (voxel, img_input, coco) in enumerate(test_dataloader):
 del idx, voxel, img_input, coco
 
 # %% [markdown]
-# ## Test Embeddings
-
-# %%
-img_embeddings, brain_embeddings = [], []
-
-with torch.no_grad():
-    k = 0
-    for idx, (voxel, img, coco) in enumerate(tqdm(test_dataloader)):
-
-        if idx<3 and k<2:
-            print("Voxel's shape", voxel.shape)
-            print("Image's shape", img.shape)
-            vim.plot_images(*img[:3].cpu().detach().numpy().transpose(0,2,3,1))
-            mutils.plot_brain_signals(*voxel.cpu().detach().numpy()[:3])
-
-        voxel = torch.mean(voxel, axis=1).to(device) # average across repetitions
-        # voxel = voxel[:,np.random.randint(3)].to(device) # random one of the single-trial samples
-
-        emb_img = clip_extractor.embed_image(img.to(device)).float() # CLIP-Image
-        
-        _, emb_brain = voxel2clip(voxel.float()) # CLIP-Brain
-        
-        if idx<3 and k<2:
-            print("Averaged voxel's shape", voxel.shape)
-            print("Image embedding's shape", emb_img.shape)
-            print("Brain embedding's shape", emb_brain.shape)
-            vim.plot_images(*emb_img[:3].cpu().detach().numpy(), labels=["","Image embeddings",""])
-            vim.plot_images(*emb_brain[:3].cpu().detach().numpy(), labels=["","Brain embeddings",""])
-        
-        # Flatten if necessary
-        emb_img = emb_img.reshape(len(emb_img),-1)
-        emb_brain = emb_brain.reshape(len(emb_brain),-1)
-        
-        # # L2 normalization
-        # emb_img = nn.functional.normalize(emb_img, dim=-1)
-        # emb_brain = nn.functional.normalize(emb_brain, dim=-1)
-        
-        img_embeddings += list(emb_img.cpu().detach().numpy())
-        brain_embeddings += list(emb_brain.cpu().detach().numpy())
-            
-        k += 1
-        # break
-
-img_embeddings = np.array(img_embeddings)
-brain_embeddings = np.array(brain_embeddings)
-print("All image embedding's shape", img_embeddings.shape)
-print("All brain embedding's shape", brain_embeddings.shape)
-
-# %% [markdown]
-# ## Test Principal Components Analysis (PCA)
-
-# %% [markdown]
-# ### Run without normalization
-
-# %%
-img_pca = decomposition.PCA(n_components=2)
-img_pca.fit(img_embeddings)
-
-img_pca_data = img_pca.transform(img_embeddings)
-print("Image data PCA shape", img_pca_data.shape)
-
-# %%
-brain_pca = decomposition.PCA(n_components=2)
-brain_pca.fit(brain_embeddings)
-
-brain_pca_data = brain_pca.transform(brain_embeddings)
-print("Brain data PCA shape", brain_pca_data.shape)
-
-# %%
-plt.scatter(*img_pca_data.T, alpha=.3)
-plt.scatter(*brain_pca_data.T, alpha=.3)
-
-# %% [markdown]
-# ### Normalize after running
-
-# %%
-img_pca_data_norm = img_pca_data.T / np.mean(np.linalg.norm(img_pca_data, axis=1))
-brain_pca_data_norm = brain_pca_data.T / np.mean(np.linalg.norm(brain_pca_data, axis=1))
-
-# %%
-plt.scatter(*img_pca_data_norm, alpha=.3)
-plt.scatter(*brain_pca_data_norm, alpha=.3)
-
-# %% [markdown]
-# ### Normalize before running
-
-# %%
-img_embeddings_norm = img_embeddings / np.mean(np.linalg.norm(img_embeddings, axis=1))
-brain_embeddings_norm = brain_embeddings / np.mean(np.linalg.norm(brain_embeddings, axis=1))
-
-# %%
-img_pca = decomposition.PCA(n_components=2)
-img_pca.fit(img_embeddings_norm)
-
-img_pca_data = img_pca.transform(img_embeddings_norm)
-print("Image data PCA shape", img_pca_data.shape)
-
-# %%
-brain_pca = decomposition.PCA(n_components=2)
-brain_pca.fit(brain_embeddings_norm)
-
-brain_pca_data = brain_pca.transform(brain_embeddings_norm)
-print("Brain data PCA shape", brain_pca_data.shape)
-
-# %%
-plt.scatter(*img_pca_data.T, alpha=.3)
-plt.scatter(*brain_pca_data.T, alpha=.3)
-
-# %%
-out_dim * num_train * 32
-
-# %% [markdown]
-# ## Training dataset
+# ### Training dataset
 
 # %%
 train_data = wds.WebDataset(train_url, shardshuffle=False)\
@@ -382,48 +273,67 @@ for idx, (voxel, img_input, coco) in enumerate(train_dataloader):
 del idx, voxel, img_input, coco
 
 # %% [markdown]
-# ## Embeddings
+# ### Validation dataset
+
+# %%
+val_data = wds.WebDataset(val_url, shardshuffle=False)\
+    .decode("torch")\
+    .rename(images="jpg;png", voxels=voxels_key, trial="trial.npy", coco="coco73k.npy", reps="num_uniques.npy")\
+    .to_tuple("voxels", "images", "coco")\
+    .batched(test_batch_size, partial=True)
+    # .with_epoch(test_loops)
+
+val_dataloader = torch.utils.data.DataLoader(val_data, batch_size=None, shuffle=False)
+
+# Check that your data loader is working
+for idx, (voxel, img_input, coco) in enumerate(val_dataloader):
+    print("IDx", idx)
+    print("Voxel shape", voxel.shape)
+    print("Image shape", img_input.shape)
+    print("Coco IDX shape", coco.shape)
+    break
+del idx, voxel, img_input, coco
 
 # %%
 img_embeddings, brain_embeddings = [], []
 
 with torch.no_grad():
-    k = 0
-    for idx, (voxel, img, coco) in enumerate(tqdm(train_dataloader)):
+    for dloader in (train_dataloader, val_dataloader, test_dataloader):
+        for idx, (voxel, img, coco) in enumerate(tqdm(dloader)):
 
-        if idx<3 and k<2:
-            print("Voxel's shape", voxel.shape)
-            print("Image's shape", img.shape)
-            vim.plot_images(*img[:3].cpu().detach().numpy().transpose(0,2,3,1))
-            mutils.plot_brain_signals(*voxel.cpu().detach().numpy()[:3])
+            if idx==0:
+                print("Voxel's shape", voxel.shape)
+                print("Image's shape", img.shape)
+                vim.plot_images(*img[:3].cpu().detach().numpy().transpose(0,2,3,1))
+                mutils.plot_brain_signals(*voxel.cpu().detach().numpy()[:3])
 
-        voxel = torch.mean(voxel, axis=1).to(device) # average across repetitions
-        # voxel = voxel[:,np.random.randint(3)].to(device) # random one of the single-trial samples
+            voxel = torch.mean(voxel, axis=1).to(device) # average across repetitions
+            # voxel = voxel[:,np.random.randint(3)].to(device) # random one of the single-trial samples
 
-        emb_img = clip_extractor.embed_image(img.to(device)).float() # CLIP-Image
-        
-        _, emb_brain = voxel2clip(voxel.float()) # CLIP-Brain
-        
-        if idx<3 and k<2:
-            print("Averaged voxel's shape", voxel.shape)
-            print("Image embedding's shape", emb_img.shape)
-            print("Brain embedding's shape", emb_brain.shape)
-            vim.plot_images(*emb_img[:3].cpu().detach().numpy(), labels=["","Image embeddings",""])
-            vim.plot_images(*emb_brain[:3].cpu().detach().numpy(), labels=["","Brain embeddings",""])
-        
-        # Flatten if necessary
-        emb_img = emb_img.reshape(len(emb_img),-1)
-        emb_brain = emb_brain.reshape(len(emb_brain),-1)
-        
-        # # L2 normalization
-        # emb_img = nn.functional.normalize(emb_img, dim=-1)
-        # emb_brain = nn.functional.normalize(emb_brain, dim=-1)
-        
-        img_embeddings += list(emb_img.cpu().detach().numpy())
-        brain_embeddings += list(emb_brain.cpu().detach().numpy())
+            emb_img = clip_extractor.embed_image(img.to(device)).float() # CLIP-Image
             
-        k += 1
-        # break
+            _, emb_brain = voxel2clip(voxel.float()) # CLIP-Brain
+            
+            if idx==0:
+                print("Averaged voxel's shape", voxel.shape)
+                print("Image embedding's shape", emb_img.shape)
+                print("Brain embedding's shape", emb_brain.shape)
+                vim.plot_images(*emb_img[:3].cpu().detach().numpy(), labels=["","Image embeddings",""])
+                vim.plot_images(*emb_brain[:3].cpu().detach().numpy(), labels=["","Brain embeddings",""])
+            
+            # Flatten if necessary
+            emb_img = emb_img.reshape(len(emb_img),-1)
+            emb_brain = emb_brain.reshape(len(emb_brain),-1)
+            
+            # # L2 normalization
+            # emb_img = nn.functional.normalize(emb_img, dim=-1)
+            # emb_brain = nn.functional.normalize(emb_brain, dim=-1)
+            
+            img_embeddings += list(emb_img.cpu().detach().numpy())
+            brain_embeddings += list(emb_brain.cpu().detach().numpy())
+                
+            k += 1
+            # break
 
 img_embeddings = np.array(img_embeddings)
 brain_embeddings = np.array(brain_embeddings)
@@ -433,8 +343,239 @@ print("All brain embedding's shape", brain_embeddings.shape)
 # %% [markdown]
 # ## Principal Components Analysis (PCA)
 
+# %%
+num_test + num_val + num_train == len(img_embeddings)
+
+# %%
+img_embeddings_train = img_embeddings[:num_train]
+img_embeddings_val = img_embeddings[num_train:-num_test]
+img_embeddings_test = img_embeddings[-num_test:]
+
+brain_embeddings_train = brain_embeddings[:num_train]
+brain_embeddings_val = brain_embeddings[num_train:-num_test]
+brain_embeddings_test = brain_embeddings[-num_test:]
+
 # %% [markdown]
-# ### Run without normalization
+# ### Training Principal Components
+
+# %% [markdown]
+# #### Normalize after running
+
+# %%
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings_train)
+
+img_pca_data = img_pca.transform(img_embeddings_train)
+print("Image data PCA shape", img_pca_data.shape)
+
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings_train)
+
+brain_pca_data = brain_pca.transform(brain_embeddings_train)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+img_pca_data_norm = img_pca_data.T / np.mean(np.linalg.norm(img_pca_data, axis=1))
+brain_pca_data_norm = brain_pca_data.T / np.mean(np.linalg.norm(brain_pca_data, axis=1))
+
+# %%
+plt.scatter(*img_pca_data_norm, alpha=.05)
+plt.scatter(*brain_pca_data_norm, alpha=.05)
+
+# %% [markdown]
+# #### Normalize before running
+
+# %%
+img_embeddings_norm = img_embeddings_train / np.mean(np.linalg.norm(img_embeddings_train, axis=1))
+brain_embeddings_norm = brain_embeddings_train / np.mean(np.linalg.norm(brain_embeddings_train, axis=1))
+
+# %%
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings_norm)
+
+img_pca_data = img_pca.transform(img_embeddings_norm)
+print("Image data PCA shape", img_pca_data.shape)
+
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings_norm)
+
+brain_pca_data = brain_pca.transform(brain_embeddings_norm)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+plt.scatter(*img_pca_data.T, alpha=.05)
+plt.scatter(*brain_pca_data.T, alpha=.05)
+
+# %% [markdown]
+# ### Validation Principal Components
+
+# %% [markdown]
+# #### Normalize after running
+
+# %%
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings_val)
+
+img_pca_data = img_pca.transform(img_embeddings_val)
+print("Image data PCA shape", img_pca_data.shape)
+
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings_val)
+
+brain_pca_data = brain_pca.transform(brain_embeddings_val)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+img_pca_data_norm = img_pca_data.T / np.mean(np.linalg.norm(img_pca_data, axis=1))
+brain_pca_data_norm = brain_pca_data.T / np.mean(np.linalg.norm(brain_pca_data, axis=1))
+
+# %%
+plt.scatter(*img_pca_data_norm, alpha=.4)
+plt.scatter(*brain_pca_data_norm, alpha=.4)
+
+# %% [markdown]
+# #### Normalize before running
+
+# %%
+img_embeddings_norm = img_embeddings_val / np.mean(np.linalg.norm(img_embeddings_val, axis=1))
+brain_embeddings_norm = brain_embeddings_val / np.mean(np.linalg.norm(brain_embeddings_val, axis=1))
+
+# %%
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings_norm)
+
+img_pca_data = img_pca.transform(img_embeddings_norm)
+print("Image data PCA shape", img_pca_data.shape)
+
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings_norm)
+
+brain_pca_data = brain_pca.transform(brain_embeddings_norm)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+plt.scatter(*img_pca_data.T, alpha=.4)
+plt.scatter(*brain_pca_data.T, alpha=.4)
+
+# %% [markdown]
+# ### Test Principal Components
+
+# %% [markdown]
+# #### Normalize after running
+
+# %%
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings_test)
+
+img_pca_data = img_pca.transform(img_embeddings_test)
+print("Image data PCA shape", img_pca_data.shape)
+
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings_test)
+
+brain_pca_data = brain_pca.transform(brain_embeddings_test)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+img_pca_data_norm = img_pca_data.T / np.mean(np.linalg.norm(img_pca_data, axis=1))
+brain_pca_data_norm = brain_pca_data.T / np.mean(np.linalg.norm(brain_pca_data, axis=1))
+
+# %%
+plt.scatter(*img_pca_data_norm, alpha=.2)
+plt.scatter(*brain_pca_data_norm, alpha=.2)
+
+# %% [markdown]
+# #### Normalize before running
+
+# %%
+img_embeddings_norm = img_embeddings_test / np.mean(np.linalg.norm(img_embeddings_test, axis=1))
+brain_embeddings_norm = brain_embeddings_test / np.mean(np.linalg.norm(brain_embeddings_test, axis=1))
+
+# %%
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings_norm)
+
+img_pca_data = img_pca.transform(img_embeddings_norm)
+print("Image data PCA shape", img_pca_data.shape)
+
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings_norm)
+
+brain_pca_data = brain_pca.transform(brain_embeddings_norm)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+plt.scatter(*img_pca_data.T, alpha=.2)
+plt.scatter(*brain_pca_data.T, alpha=.2)
+
+# %% [markdown]
+# ### Validation Principal Components
+
+# %% [markdown]
+# #### Normalize after running
+
+# %%
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings_val)
+
+img_pca_data = img_pca.transform(img_embeddings_val)
+print("Image data PCA shape", img_pca_data.shape)
+
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings_val)
+
+brain_pca_data = brain_pca.transform(brain_embeddings_val)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+plt.scatter(*img_pca_data.T, alpha=.3)
+plt.scatter(*brain_pca_data.T, alpha=.3)
+
+# %%
+img_pca_data_norm = img_pca_data.T / np.mean(np.linalg.norm(img_pca_data, axis=1))
+brain_pca_data_norm = brain_pca_data.T / np.mean(np.linalg.norm(brain_pca_data, axis=1))
+
+# %%
+plt.scatter(*img_pca_data_norm, alpha=.4)
+plt.scatter(*brain_pca_data_norm, alpha=.4)
+
+# %% [markdown]
+# #### Normalize before running
+
+# %%
+img_embeddings_norm = img_embeddings_val / np.mean(np.linalg.norm(img_embeddings_val, axis=1))
+brain_embeddings_norm = brain_embeddings_val / np.mean(np.linalg.norm(brain_embeddings_val, axis=1))
+
+# %%
+img_pca = decomposition.PCA(n_components=2)
+img_pca.fit(img_embeddings_norm)
+
+img_pca_data = img_pca.transform(img_embeddings_norm)
+print("Image data PCA shape", img_pca_data.shape)
+
+# %%
+brain_pca = decomposition.PCA(n_components=2)
+brain_pca.fit(brain_embeddings_norm)
+
+brain_pca_data = brain_pca.transform(brain_embeddings_norm)
+print("Brain data PCA shape", brain_pca_data.shape)
+
+# %%
+plt.scatter(*img_pca_data.T, alpha=.4)
+plt.scatter(*brain_pca_data.T, alpha=.4)
+
+# %% [markdown]
+# ### Whole dataset
+
+# %% [markdown]
+# #### Normalize after running
 
 # %%
 img_pca = decomposition.PCA(n_components=2)
@@ -451,13 +592,6 @@ brain_pca_data = brain_pca.transform(brain_embeddings)
 print("Brain data PCA shape", brain_pca_data.shape)
 
 # %%
-plt.scatter(*img_pca_data.T, alpha=.05)
-plt.scatter(*brain_pca_data.T, alpha=.05)
-
-# %% [markdown]
-# ### Normalize after running
-
-# %%
 img_pca_data_norm = img_pca_data.T / np.mean(np.linalg.norm(img_pca_data, axis=1))
 brain_pca_data_norm = brain_pca_data.T / np.mean(np.linalg.norm(brain_pca_data, axis=1))
 
@@ -466,7 +600,7 @@ plt.scatter(*img_pca_data_norm, alpha=.05)
 plt.scatter(*brain_pca_data_norm, alpha=.05)
 
 # %% [markdown]
-# ### Normalize before running
+# #### Normalize before running
 
 # %%
 img_embeddings_norm = img_embeddings / np.mean(np.linalg.norm(img_embeddings, axis=1))

@@ -294,11 +294,15 @@ for idx, (voxel, img_input, coco) in enumerate(val_dataloader):
     break
 del idx, voxel, img_input, coco
 
+# %% [markdown]
+# ## Embeddings
+
 # %%
 img_embeddings, brain_embeddings = [], []
 
 with torch.no_grad():
     for dloader in (train_dataloader, val_dataloader, test_dataloader):
+        k = 0
         for idx, (voxel, img, coco) in enumerate(tqdm(dloader)):
 
             if idx==0:
@@ -341,7 +345,7 @@ print("All image embedding's shape", img_embeddings.shape)
 print("All brain embedding's shape", brain_embeddings.shape)
 
 # %% [markdown]
-# ## Principal Components Analysis (PCA)
+# ### Split into datasets
 
 # %%
 num_test + num_val + num_train == len(img_embeddings)
@@ -354,6 +358,123 @@ img_embeddings_test = img_embeddings[-num_test:]
 brain_embeddings_train = brain_embeddings[:num_train]
 brain_embeddings_val = brain_embeddings[num_train:-num_test]
 brain_embeddings_test = brain_embeddings[-num_test:]
+
+# %% [markdown]
+# ## Basic characterization of embeddings
+
+# %%
+all_img_min, all_img_max = [], []
+all_img_mean, all_img_sqs_mean = [], []
+all_brain_min, all_brain_max = [], []
+all_brain_mean, all_brain_sqs_mean = [], []
+
+for index, (img_emb, brain_emb) in tqdm(enumerate(zip(img_embeddings, brain_embeddings))):
+    all_img_min.append(float(img_emb.min()))
+    all_img_max.append(float(img_emb.max()))
+    all_img_mean.append(np.mean(img_emb))
+    all_img_sqs_mean.append(np.mean(img_emb**2))
+    all_brain_min.append(float(brain_emb.min()))
+    all_brain_max.append(float(brain_emb.max()))
+    all_brain_mean.append(np.mean(brain_emb))
+    all_brain_sqs_mean.append(np.mean(brain_emb**2))
+del img_emb, brain_emb
+
+all_img_min = np.array(all_img_min)
+all_img_max = np.array(all_img_max)
+all_img_mean = np.array(all_img_mean)
+all_img_stds = np.sqrt( np.array(all_img_sqs_mean) - all_img_mean**2 )
+all_brain_min = np.array(all_brain_min)
+all_brain_max = np.array(all_brain_max)
+all_brain_mean = np.array(all_brain_mean)
+all_brain_stds = np.sqrt( np.array(all_brain_sqs_mean) - all_brain_mean**2 )
+
+img_min = np.min(all_img_min); img_max = np.max(all_img_max)
+img_mean = np.mean(all_img_mean, axis=0)
+img_std = np.sqrt( np.mean(all_img_sqs_mean, axis=0) - img_mean**2 )
+brain_min = np.min(all_brain_min); brain_max = np.max(all_brain_max)
+brain_mean = np.mean(all_brain_mean, axis=0)
+brain_std = np.sqrt( np.mean(all_brain_sqs_mean, axis=0) - brain_mean**2 )
+
+# %%
+all_img_min_train = all_img_min[:num_train]
+all_img_max_train = all_img_max[:num_train]
+all_img_mean_train = all_img_mean[:num_train]
+all_img_stds_train = all_img_stds[:num_train]
+all_img_sqs_mean_train = all_img_sqs_mean[:num_train]
+all_brain_min_train = all_brain_min[:num_train]
+all_brain_max_train = all_brain_max[:num_train]
+all_brain_mean_train = all_brain_mean[:num_train]
+all_brain_stds_train = all_brain_stds[:num_train]
+all_brain_sqs_mean_train = all_brain_sqs_mean[:num_train]
+
+all_img_min_val = all_img_min[num_train:-num_test]
+all_img_max_val = all_img_max[num_train:-num_test]
+all_img_mean_val = all_img_mean[num_train:-num_test]
+all_img_stds_val = all_img_stds[num_train:-num_test]
+all_img_sqs_mean_val = all_img_sqs_mean[num_train:-num_test]
+all_brain_min_val = all_brain_min[num_train:-num_test]
+all_brain_max_val = all_brain_max[num_train:-num_test]
+all_brain_mean_val = all_brain_mean[num_train:-num_test]
+all_brain_stds_val = all_brain_stds[num_train:-num_test]
+all_brain_sqs_mean_val = all_brain_sqs_mean[num_train:-num_test]
+
+all_img_min_test = all_img_min[-num_test:]
+all_img_max_test = all_img_max[-num_test:]
+all_img_mean_test = all_img_mean[-num_test:]
+all_img_stds_test = all_img_stds[-num_test:]
+all_img_sqs_mean_test = all_img_sqs_mean[-num_test:]
+all_brain_min_test = all_brain_min[-num_test:]
+all_brain_max_test = all_brain_max[-num_test:]
+all_brain_mean_test = all_brain_mean[-num_test:]
+all_brain_stds_test = all_brain_stds[-num_test:]
+all_brain_sqs_mean_test = all_brain_sqs_mean[-num_test:]
+
+# %%
+img_min_train = np.min(all_img_min_train); img_max_train = np.max(all_img_max_train)
+img_mean_train = np.mean(all_img_mean_train, axis=0)
+img_std_train = np.sqrt( np.mean(all_img_sqs_mean_train, axis=0) - img_mean_train**2 )
+brain_min_train = np.min(all_brain_min_train); brain_max_train = np.max(all_brain_max_train)
+brain_mean_train = np.mean(all_brain_mean_train, axis=0)
+brain_std_train = np.sqrt( np.mean(all_brain_sqs_mean_train, axis=0) - brain_mean_train**2 )
+
+img_min_val = np.min(all_img_min_val); img_max_val = np.max(all_img_max_val)
+img_mean_val = np.mean(all_img_mean_val, axis=0)
+img_std_val = np.sqrt( np.mean(all_img_sqs_mean_val, axis=0) - img_mean_val**2 )
+brain_min_val = np.min(all_brain_min_val); brain_max_val = np.max(all_brain_max_val)
+brain_mean_val = np.mean(all_brain_mean_val, axis=0)
+brain_std_val = np.sqrt( np.mean(all_brain_sqs_mean_val, axis=0) - brain_mean_val**2 )
+
+img_min_test = np.min(all_img_min_test); img_max_test = np.max(all_img_max_test)
+img_mean_test = np.mean(all_img_mean_test, axis=0)
+img_std_test = np.sqrt( np.mean(all_img_sqs_mean_test, axis=0) - img_mean_test**2 )
+brain_min_test = np.min(all_brain_min_test); brain_max_test = np.max(all_brain_max_test)
+brain_mean_test = np.mean(all_brain_mean_test, axis=0)
+brain_std_test = np.sqrt( np.mean(all_brain_sqs_mean_test, axis=0) - brain_mean_test**2 )
+
+# %%
+print("Img Min & Max", (img_min, img_max))
+print("Img Mean", img_mean)
+print("Img Std", img_std)
+print("Brain Min & Max", (brain_min, brain_max))
+print("Brain Mean", brain_mean)
+print("Brain Std", brain_std)
+
+# %%
+print("Training Img Min & Max", (img_min_train, img_max_train))
+print("Training Img Mean", img_mean_train)
+print("Training Img Std", img_std_train)
+print("Training Brain Min & Max", (brain_min_train, brain_max_train))
+print("Training Brain Mean", brain_mean_train)
+print("Training Brain Std", brain_std_train)
+
+# %% [markdown]
+# Warning! Training's and whole dataset's brain signals mean differ considerably
+
+# %% [markdown]
+# ## Principal Components Analysis (PCA)
+
+# %% [markdown]
+# I'm worried that I needed to have a dataset with mean zero to start with. Luckily, the mean is close to 0. But is it enough?
 
 # %% [markdown]
 # ### Training Principal Components

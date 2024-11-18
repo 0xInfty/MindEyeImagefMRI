@@ -127,15 +127,6 @@ num_test = metadata['totals']['test']
 # %% [markdown]
 # What is `num_train`? There are supposedly 24980 training samplesm not 8859. Mmm... It's close to 24980/3, but it's not exactly the same.
 
-# %%
-num_train
-
-# %%
-print(num_train*3)
-
-# %%
-num_test
-
 # %% [markdown]
 # ### General configuration
 
@@ -146,9 +137,6 @@ print("Device:", device)
 # %%
 seed = 42 # Random seed picked in the original code
 utils.seed_everything(seed=seed)
-
-# %%
-test_batch_size
 
 # %% [markdown]
 # ### Test dataset

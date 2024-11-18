@@ -494,10 +494,17 @@ def reconstruction(
             diffusion_priors = [diffusion_priors]
         brain_clip_embeddings_sum = None
         for diffusion_prior in diffusion_priors:
-            brain_clip_embeddings0, proj_embeddings = diffusion_prior.voxel2clip(voxel.to(device).float())
+            voxel = voxel.to(diffusion_prior.voxel2clip.device)
+            brain_clip_embeddings0, proj_embeddings = diffusion_prior.voxel2clip(voxel.float())
             if retrieve:
                 continue
-            brain_clip_embeddings0 = brain_clip_embeddings0.view(len(voxel),-1,768) if isinstance(clip_extractor,Clipper) else brain_clip_embeddings0.view(len(voxel),-1,1024)
+            if isinstance(clip_extractor, Clipper):                
+                brain_clip_embeddings0 = brain_clip_embeddings0.view(len(voxel),-1,768)
+            else:
+                brain_clip_embeddings0 = brain_clip_embeddings0.view(len(voxel),-1,1024)
+            
+            brain_clip_embeddings0 = brain_clip_embeddings0.to(diffusion_prior.device)
+            proj_embeddings = proj_embeddings.to(diffusion_prior.device)
             
             if recons_per_sample>0:
                 if not img_variations:
@@ -528,7 +535,9 @@ def reconstruction(
             brain_clip_embeddings = brain_clip_embeddings_sum / len(diffusion_priors)
     
     if voxel2clip_cls is not None:
-        _, cls_embeddings = voxel2clip_cls(voxel.to(device).float())
+        voxel = voxel.to(voxel2clip_cls.device)
+        _, cls_embeddings = voxel2clip_cls(voxel.float())
+        cls_embeddings.to(diffusion_prior.device)
     else:
         cls_embeddings = proj_embeddings
     if verbose: print("cls_embeddings.",cls_embeddings.shape)
@@ -557,12 +566,15 @@ def reconstruction(
         if verbose: print("prompt!",prompt_embeds.shape)
 
         if do_classifier_free_guidance:
-            input_embedding = torch.cat([torch.zeros_like(input_embedding), input_embedding]).to(device).to(unet.dtype)
-            prompt_embeds = torch.cat([torch.zeros_like(prompt_embeds), prompt_embeds]).to(device).to(unet.dtype)
+            input_embedding = torch.cat([torch.zeros_like(input_embedding), input_embedding])
+            input_embedding = input_embedding.to(diffusion_prior.device).to(unet.dtype)
+            prompt_embeds = torch.cat([torch.zeros_like(prompt_embeds), prompt_embeds])
+            prompt_embeds = prompt_embeds.to(diffusion_prior.device).to(unet.dtype)
 
         # dual_prompt_embeddings
         if not img_variations:
             input_embedding = torch.cat([prompt_embeds, input_embedding], dim=1)
+        #TODO: GOT UP TO HERE. LOOKS LIKE I'LL NEED THE NOISE SCHEDULER THAT I CAN'T LOAD.
 
         # 4. Prepare timesteps
         noise_scheduler.set_timesteps(num_inference_steps=num_inference_steps, device=device)

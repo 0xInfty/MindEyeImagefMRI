@@ -83,7 +83,7 @@ for attribute_name in vars(args).keys():
     globals()[attribute_name] = getattr(args, attribute_name)
 
 # %%
-subj = 1 #note: we only trained subjects 1 2 5 7, since they have data across full sessions
+#note: we only trained subjects 1 2 5 7, since they have data across full sessions
 if subj == 1:
     num_voxels = 15724
 elif subj == 2:
@@ -169,7 +169,6 @@ diffusion_prior = BrainDiffusionPrior(
 outdir = os.path.join(dirs.MODELS_HOME, model_name) # f'../train_logs/{model_name}'
 ckpt_path = os.path.join(outdir, f'last.pth')
 
-print("ckpt_path",ckpt_path)
 checkpoint = torch.load(ckpt_path, map_location=device)
 state_dict = checkpoint['model_state_dict']
 print("EPOCH: ",checkpoint['epoch'])
@@ -201,7 +200,6 @@ diffusion_prior_cls = BrainDiffusionPriorOld.from_pretrained(
 outdir = os.path.join(dirs.MODELS_HOME, model_name2) # f'../train_logs/{model_name2}'
 ckpt_path = os.path.join(outdir, f'last.pth')
 
-print("ckpt_path",ckpt_path)
 checkpoint = torch.load(ckpt_path, map_location=device)
 state_dict = checkpoint['model_state_dict']
 print("EPOCH: ",checkpoint['epoch'])
@@ -354,6 +352,18 @@ voxel2clip.eval().to(gpu_1)
 diffusion_priors = [diffusion_prior]
 pass
 
+# %%
+print("\n".join(state_dict.keys()))
+
+# %%
+# If you need to isolate the brain encoder, then run...
+'''
+torch.save({'model': voxel2clip.state_dict(),
+            'epoch': checkpoint['epoch']}, 
+            os.path.join(dirs.MODELS_HOME, model_name, "voxel2clip.pth"))
+'''
+# That way you can use it without the diffusion prior and diffusion model
+
 # %% [markdown]
 # ### Img variations 
 
@@ -399,54 +409,70 @@ pass
 # %% [markdown]
 # ## Retrieval on test set
 
-# %%
-percent_correct_fwds, percent_correct_bwds = [], []
-percent_correct_fwd, percent_correct_bwd = None, None
+# %% [markdown]
+# Originally, the MindEye code was executed on a single GPU by the authors using an A100 with 80 GB of memory.
+# 
+# This code is now being adapted to run on 2 GPUs, so that it can be executed using a pair of A5000s with 24 GB of memory.
 
-for val_i, (voxel, img, coco) in enumerate(tqdm(val_dl,total=val_loops)):
-    voxel = voxel.to(gpu_1)
-    img = img.to(gpu_1)
-    with torch.no_grad():
-        voxel = torch.mean(voxel,axis=1).to(gpu_1) # average across repetitions
+# %%
+percents_correct_forwards, percents_correct_backwards = [], []
+
+with torch.no_grad():
+    k = 0
+    for idx, (voxel, img, coco) in enumerate(tqdm(test_dataloader, total=test_loops)):
+
+        # if idx<3 and k<2:
+        #     print("Voxel's shape", voxel.shape)
+        #     print("Image's shape", img.shape)
+
+        voxel = torch.mean(voxel, axis=1).to(gpu_1) # average across repetitions
         # voxel = voxel[:,np.random.randint(3)].to(device) # random one of the single-trial samples
 
-        emb = clip_extractor.embed_image(img).float() # CLIP-Image
+        emb_img = clip_extractor.embed_image(img.to(gpu_1)).float() # CLIP-Image
         
         _, emb_ = diffusion_prior.voxel2clip(voxel.float()) # CLIP-Brain
-        del voxel, img
+        # _, emb_brain = voxel2clip(voxel.float()) # CLIP-Brain
         
-        # flatten if necessary
-        emb = emb.reshape(len(emb),-1)
-        emb_ = emb_.reshape(len(emb_),-1)
+        # if idx<3 and k<2:
+        #     print("Averaged voxel's shape", voxel.shape)
+        #     print("Image embedding's shape", emb_img.shape)
+        #     print("Brain embedding's shape", emb_brain.shape)
         
-        # l2norm 
-        emb = nn.functional.normalize(emb,dim=-1).to(gpu_1)
-        emb_ = nn.functional.normalize(emb_,dim=-1).to(gpu_1)
+        # Flatten if necessary
+        emb_img = emb_img.reshape(len(emb_img),-1)
+        emb_brain = emb_brain.reshape(len(emb_brain),-1)
         
-        labels = torch.arange(len(emb)).to(gpu_1)
-        fwd_sim = utils.batchwise_cosine_similarity(emb_,emb)  # brain, clip
-        # bwd_sim = utils.batchwise_cosine_similarity(emb,emb_)  # clip, brain
+        # L2 normalization
+        emb_img = nn.functional.normalize(emb_img, dim=-1)
+        emb_brain = nn.functional.normalize(emb_brain, dim=-1)
+        
+        labels = torch.arange(len(emb_img)).to(gpu_1)
+        similarity = utils.batchwise_cosine_similarity(emb_brain, emb_img)  # Brain, CLIP
 
-        # assert len(bwd_sim) == batch_size
+        # if idx<3 and k<2:
+        #     print("Similarity matrix's shape", similarity.shape)
         
-        percent_correct_fwds = np.append(percent_correct_fwds, utils.topk(fwd_sim, labels,k=1).item())
-        percent_correct_bwds = np.append(percent_correct_bwds, utils.topk(fwd_sim.T, labels,k=1).item())
+        top1_forwards = utils.topk(similarity, labels, k=1).item()
+        top1_backwards = utils.topk(torch.transpose(similarity, 0, 1), labels, k=1).item()
+        print("Top-1 Accuracy per Brain Signal", top1_forwards*100, r"%")
+        print("Top-1 Accuracy per Image", top1_backwards*100, r"%")
+        
+        percents_correct_forwards.append(top1_forwards)
+        percents_correct_backwards.append(top1_backwards)
             
-        print(percent_correct_fwds[-1], percent_correct_bwds[-1])
-            
-percent_correct_fwd = np.mean(percent_correct_fwds)
-fwd_sd = np.std(percent_correct_fwds) / np.sqrt(len(percent_correct_fwds))
+        k += 1
+        # break
+
+percent_correct_fwd = np.mean(percents_correct_forwards)
+fwd_sd = np.std(percents_correct_forwards) / np.sqrt(len(percents_correct_forwards))
 fwd_ci = stats.norm.interval(0.95, loc=percent_correct_fwd, scale=fwd_sd)
 
-percent_correct_bwd = np.mean(percent_correct_bwds)
-bwd_sd = np.std(percent_correct_bwds) / np.sqrt(len(percent_correct_bwds))
+percent_correct_bwd = np.mean(percents_correct_backwards)
+bwd_sd = np.std(percents_correct_backwards) / np.sqrt(len(percents_correct_backwards))
 bwd_ci = stats.norm.interval(0.95, loc=percent_correct_bwd, scale=bwd_sd)
 
 print(f"fwd percent_correct: {percent_correct_fwd:.4f} 95% CI: [{fwd_ci[0]:.4f},{fwd_ci[1]:.4f}]")
 print(f"bwd percent_correct: {percent_correct_bwd:.4f} 95% CI: [{bwd_ci[0]:.4f},{bwd_ci[1]:.4f}]")
-
-fwd_sim = np.array(fwd_sim.cpu())
-# bwd_sim = np.array(bwd_sim.cpu())
 
 # %%
 # SUBJ 1
@@ -469,6 +495,28 @@ fwd_sim = np.array(fwd_sim.cpu())
 # ## Image retrieval visualization
 
 # %%
+for val_i, (voxel, img, coco) in enumerate(tqdm(val_dl,total=val_loops)):
+    voxel = voxel.to(gpu_1)
+    img = img.to(gpu_1)
+    break
+
+print("Given Brain embedding, find correct Image embedding")
+fig, ax = plt.subplots(nrows=4, ncols=6, figsize=(11,12))
+for trial in range(4):
+    ax[trial, 0].imshow(utils.torch_to_Image(img[trial]))
+    ax[trial, 0].set_title("original\nimage")
+    ax[trial, 0].axis("off")
+    for attempt in range(5):
+        which = np.flip(np.argsort(fwd_sim[trial]))[attempt]
+        ax[trial, attempt+1].imshow(utils.torch_to_Image(img[which]))
+        ax[trial, attempt+1].set_title(f"Top {attempt+1}")
+        ax[trial, attempt+1].axis("off")
+fig.tight_layout()
+plt.show()
+
+# %%
+# batch size 100
+
 for val_i, (voxel, img, coco) in enumerate(tqdm(val_dl,total=val_loops)):
     voxel = voxel.to(gpu_1)
     img = img.to(gpu_1)
@@ -550,6 +598,23 @@ plt.show()
 # ## Brain retrieval visualization
 
 # %%
+print("Given Image embedding, find correct Brain embedding")
+fig, ax = plt.subplots(nrows=4, ncols=6, figsize=(11,12))
+for trial in range(4):
+    ax[trial, 0].imshow(utils.torch_to_Image(img[trial]))
+    ax[trial, 0].set_title("original\nimage")
+    ax[trial, 0].axis("off")
+    for attempt in range(5):
+        which = np.flip(np.argsort(fwd_sim.T[trial]))[attempt]
+        ax[trial, attempt+1].imshow(utils.torch_to_Image(img[which]))
+        ax[trial, attempt+1].set_title(f"Top {attempt+1}")
+        ax[trial, attempt+1].axis("off")
+fig.tight_layout()
+plt.show()
+
+# %%
+# batch size 100
+
 print("Given Image embedding, find correct Brain embedding")
 fig, ax = plt.subplots(nrows=4, ncols=6, figsize=(11,12))
 for trial in range(4):

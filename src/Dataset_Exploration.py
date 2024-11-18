@@ -475,6 +475,8 @@ print("Training Brain Std", brain_std_train)
 
 # %% [markdown]
 # I'm worried that I needed to have a dataset with mean zero to start with. Luckily, the mean is close to 0. But is it enough?
+# 
+# Ah, no, PCA maximizes the variance of the compressed data, and the variance doesn't depend on the mean of the data ==> Everything should be alright.
 
 # %% [markdown]
 # ### Training Principal Components

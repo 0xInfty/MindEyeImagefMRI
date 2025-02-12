@@ -43,7 +43,7 @@ import torch.nn as nn
 from tqdm import tqdm
 import webdataset as wds
 
-import pyvtools.dirs as dirs
+import pyvdirs.dirs as dirs
 import pyvtools.image as vim
 
 import utils

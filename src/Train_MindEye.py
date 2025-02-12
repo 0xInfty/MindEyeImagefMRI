@@ -25,7 +25,7 @@ torch.backends.cuda.matmul.allow_tf32 = True
 import utils
 from models import Clipper, BrainNetwork, BrainDiffusionPrior, BrainDiffusionPriorOld, VersatileDiffusionPriorNetwork
 
-import pyvtools.dirs as dirs
+import pyvdirs.dirs as dirs
 
 # Multi-GPU config #
 from accelerate import Accelerator

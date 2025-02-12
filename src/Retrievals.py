@@ -38,7 +38,7 @@ seed=42
 utils.seed_everything(seed=seed)
 
 # %%
-import pyvtools.dirs as dirs
+import pyvdirs.dirs as dirs
 
 # %% [markdown]
 # # Configurations

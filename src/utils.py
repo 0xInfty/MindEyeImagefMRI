@@ -473,6 +473,7 @@ def reconstruction(
     img_variations=False,
     n_samples_save=1,
     num_retrieved=16,
+    device=device,
 ):
     assert n_samples_save==1, "n_samples_save must = 1. Function must be called one image at a time"
     

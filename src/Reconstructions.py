@@ -26,7 +26,7 @@ print("device:",device)
 import utils
 from models import Clipper, OpenClipper, BrainNetwork, BrainDiffusionPrior, BrainDiffusionPriorOld, Voxel2StableDiffusionModel, VersatileDiffusionPriorNetwork
 
-import pyvtools.dirs as dirs
+import pyvdirs.dirs as dirs
 
 if utils.is_interactive():
     %load_ext autoreload
@@ -44,7 +44,8 @@ if utils.is_interactive():
     # Example use
     jupyter_args = f"--data_path={dirs.DATA_HOME} \
                      --subj=1 \
-                     --model_name=prior_257_final_subj01_bimixco_softclip_byol"
+                     --model_name=prior_257_final_subj01_bimixco_softclip_byol \
+                     --vd_cache_dir={os.path.join(dirs.MODELS_HOME, 'versatile_diffusion_cache')}"
     # "--data_path=/fsx/proj-medarc/fmri/natural-scenes-dataset \
 
     jupyter_args = jupyter_args.split()
@@ -111,6 +112,9 @@ elif subj == 8:
     num_voxels = 14386
 print("subj",subj,"num_voxels",num_voxels)
 
+# %% [markdown]
+# ## Dataset
+
 # %%
 # val_url = f"{data_path}/webdataset_avg_split/test/test_subj0{subj}_" + "{0..1}.tar"
 # meta_url = f"{data_path}/webdataset_avg_split/metadata_subj0{subj}.json"
@@ -118,6 +122,7 @@ val_url = f"{data_path}/test_subj0{subj}_" + "{0..1}.tar"
 meta_url = f"{data_path}/metadata_subj0{subj}.json"
 num_train = 8559 + 300
 num_val = 982
+
 batch_size = val_batch_size = 1
 voxels_key = 'nsdgeneral.npy' # 1d inputs
 
@@ -178,7 +183,7 @@ vd_pipe.vae.eval()
 vd_pipe.image_unet.requires_grad_(False)
 vd_pipe.vae.requires_grad_(False)
 
-vd_pipe.scheduler = UniPCMultistepScheduler.from_pretrained(vd_cache_dir, subfolder="scheduler")
+# vd_pipe.scheduler = UniPCMultistepScheduler.from_pretrained(vd_cache_dir, subfolder="scheduler")
 num_inference_steps = 20
 
 # Set weighting of Dual-Guidance 
@@ -197,13 +202,12 @@ for name, module in vd_pipe.image_unet.named_modules():
 unet = vd_pipe.image_unet
 vae = vd_pipe.vae
 noise_scheduler = vd_pipe.scheduler
+# noise_scheduler = None
 
 # %% [markdown]
 # ## Load Versatile Diffusion model
 
 # %%
-img_variations = False
-
 out_dim = 257 * 768
 clip_extractor = Clipper("ViT-L/14", hidden_state=True, norm_embs=True, device=device)
 voxel2clip_kwargs = dict(in_dim=num_voxels,out_dim=out_dim)
@@ -215,7 +219,7 @@ out_dim = 768
 depth = 6
 dim_head = 64
 heads = 12 # heads * dim_head = 12 * 64 = 768
-timesteps = 100 #100
+timesteps = 100
 
 prior_network = VersatileDiffusionPriorNetwork(
         dim=out_dim,
@@ -236,7 +240,7 @@ diffusion_prior = BrainDiffusionPrior(
     voxel2clip=voxel2clip,
 )
 
-outdir = f'../train_logs/{model_name}'
+outdir = os.path.join(dirs.MODELS_HOME, model_name) # f'../train_logs/{model_name}'
 ckpt_path = os.path.join(outdir, f'last.pth')
 
 print("ckpt_path",ckpt_path)
@@ -245,13 +249,16 @@ state_dict = checkpoint['model_state_dict']
 print("EPOCH: ",checkpoint['epoch'])
 diffusion_prior.load_state_dict(state_dict,strict=False)
 diffusion_prior.eval().to(device)
-diffusion_priors = [diffusion_prior]
+# prior_network.eval().to(gpu_1)
+# prior_network.device = gpu_1
+# voxel2clip.eval().to(gpu_1)
 pass
 
 # %% [markdown]
 # ## Load Image Variations model
 
 # %%
+img_variations = False
 # img_variations = True
 
 # # CLS model
@@ -355,7 +362,7 @@ for val_i, (voxel, img, coco) in enumerate(tqdm(val_dl,total=len(ind_include))):
                 img, voxel,
                 clip_extractor, unet, vae, noise_scheduler,
                 voxel2clip_cls = None, #diffusion_prior_cls.voxel2clip,
-                diffusion_priors = diffusion_priors,
+                diffusion_priors = [diffusion_prior],
                 text_token = None,
                 img_lowlevel = blurry_recons,
                 num_inference_steps = num_inference_steps,
@@ -387,6 +394,9 @@ for val_i, (voxel, img, coco) in enumerate(tqdm(val_dl,total=len(ind_include))):
     if val_i>=np.max(ind_include):
         break
 
+    # break # ADDED TO NOT BE STUCK IN THE FOR LOOP
+
+# %%
 all_brain_recons = all_brain_recons.view(-1,3,imsize,imsize)
 print(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 

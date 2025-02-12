@@ -1,25 +1,33 @@
 # %%
+# # Code to convert this notebook to .py if you want to run it via command line or with Slurm
+# from subprocess import call
+# command = "jupyter nbconvert Reconstructions.ipynb --to python"
+# call(command,shell=True)
+
+# %%
 import os
 import sys
+import json
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+import torch.nn as nn
+from torchvision import transforms
 from tqdm import tqdm
 from datetime import datetime
 import webdataset as wds
 import PIL
 import argparse
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-local_rank = 0
-print("device:",device)
-
-windows = True # Set to false if running in Ubuntu
+cpu = torch.device("cpu")
+gpu_1 = torch.device("cuda:0")
+gpu_2 = torch.device("cuda:1")
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# print("device:",device)
 
 import utils
-from models import Clipper, BrainNetwork, BrainDiffusionPrior, VersatileDiffusionPriorNetwork
+from models import Clipper, OpenClipper, BrainNetwork, BrainDiffusionPrior, BrainDiffusionPriorOld, Voxel2StableDiffusionModel, VersatileDiffusionPriorNetwork
 
-import pyvdirs.dirs as dirs
 import pyvdirs.dirs as dirs
 
 if utils.is_interactive():
@@ -43,7 +51,7 @@ if utils.is_interactive():
     # "--data_path=/fsx/proj-medarc/fmri/natural-scenes-dataset \
 
     jupyter_args = jupyter_args.split()
-    print(jupyter_args)
+    print(jupyter_args[1:])
 
 # %%
 parser = argparse.ArgumentParser(description="Model Training Configuration")
@@ -56,7 +64,7 @@ parser.add_argument(
     help="name of trained autoencoder model",
 )
 parser.add_argument(
-    "--data_path", type=str, default="/fMRI-reconstruction-NSD/src/datasets",
+    "--data_path", type=str, default="/fsx/proj-medarc/fmri/natural-scenes-dataset",
     help="Path to where NSD data is stored (see README)",
 )
 parser.add_argument(
@@ -71,7 +79,7 @@ parser.add_argument(
     help="How many recons to output, to then automatically pick the best one (MindEye uses 16)",
 )
 parser.add_argument(
-    "--vd_cache_dir", type=str, default='/fMRI-reconstruction-NSD/train_logs',
+    "--vd_cache_dir", type=str, default='/fsx/proj-medarc/fmri/cache/models--shi-labs--versatile-diffusion/snapshots/2926f8e11ea526b562cd592b099fcf9c2985d0b7',
     help="Where is cached Versatile Diffusion model; if not cached will download to this path",
 )
 
@@ -79,40 +87,42 @@ if utils.is_interactive():
     args = parser.parse_args(jupyter_args)
 else:
     args = parser.parse_args()
+
+# create global variables without the args prefix
+for attribute_name in vars(args).keys():
+    globals()[attribute_name] = getattr(args, attribute_name)
     
-if args.autoencoder_name=="None":
-    args.autoencoder_name = None
+if autoencoder_name=="None":
+    autoencoder_name = None
 
 # %%
-if args.subj == 1:
+subj = 1 #note: we only trained subjects 1 2 5 7, since they have data across full sessions
+if subj == 1:
     num_voxels = 15724
-elif args.subj == 2:
+elif subj == 2:
     num_voxels = 14278
-elif args.subj == 3:
+elif subj == 3:
     num_voxels = 15226
-elif args.subj == 4:
+elif subj == 4:
     num_voxels = 13153
-elif args.subj == 5:
+elif subj == 5:
     num_voxels = 13039
-elif args.subj == 6:
+elif subj == 6:
     num_voxels = 17907
-elif args.subj == 7:
+elif subj == 7:
     num_voxels = 12682
-elif args.subj == 8:
+elif subj == 8:
     num_voxels = 14386
 print("subj",subj,"num_voxels",num_voxels)
 
 # %% [markdown]
 # ## Dataset
 
-# %% [markdown]
-# ## Dataset
-
 # %%
-if windows: val_url = (f"file:{args.data_path}/test_subj0{args.subj}_"+"{0..1}.tar").replace(os.path.sep, '/')
-else: val_url = os.path.join(args.data_path, f"test_subj0{args.subj}_"+"{0..1}.tar")
-meta_url = os.path.join( args.data_path, f"metadata_subj0{args.subj}.json" )
-
+# val_url = f"{data_path}/webdataset_avg_split/test/test_subj0{subj}_" + "{0..1}.tar"
+# meta_url = f"{data_path}/webdataset_avg_split/metadata_subj0{subj}.json"
+val_url = f"{data_path}/test_subj0{subj}_" + "{0..1}.tar"
+meta_url = f"{data_path}/metadata_subj0{subj}.json"
 num_train = 8559 + 300
 num_val = 982
 
@@ -127,7 +137,7 @@ val_data = wds.WebDataset(val_url, resampled=False)\
 
 val_dl = torch.utils.data.DataLoader(val_data, batch_size=None, shuffle=False)
 
-# Check that your data loader is working
+# check that your data loader is working
 for val_i, (voxel, img_input, coco) in enumerate(val_dl):
     print("idx",val_i)
     print("voxel.shape",voxel.shape)
@@ -140,18 +150,18 @@ for val_i, (voxel, img_input, coco) in enumerate(val_dl):
 # %%
 from models import Voxel2StableDiffusionModel
 
-outdir = f"{args.data_path}/{args.autoencoder_name}"
+outdir = f'../train_logs/{autoencoder_name}'
 ckpt_path = os.path.join(outdir, f'epoch120.pth')
 
 if os.path.exists(ckpt_path):
-    checkpoint = torch.load(ckpt_path, map_location=device)
+    checkpoint = torch.load(ckpt_path, map_location=cpu)
     state_dict = checkpoint['model_state_dict']
 
     voxel2sd = Voxel2StableDiffusionModel(in_dim=num_voxels)
 
     voxel2sd.load_state_dict(state_dict,strict=False)
     voxel2sd.eval()
-    voxel2sd.to(device)
+    voxel2sd.to(cpu)
     print("Loaded low-level model!")
 else:
     print("No valid path for low-level model specified; not using img2img!") 
@@ -165,15 +175,12 @@ print('Creating versatile diffusion reconstruction pipeline...')
 from diffusers import VersatileDiffusionDualGuidedPipeline, UniPCMultistepScheduler
 from diffusers.models import DualTransformer2DModel
 try:
-    # vd_pipe =  VersatileDiffusionDualGuidedPipeline.from_pretrained(vd_cache_dir).to(device).to(torch.float16)
-    vd_pipe = VersatileDiffusionDualGuidedPipeline.from_pretrained(
-        "fMRI-reconstruction-NSD/train_logs/prior_257_final_subj01_bimixco_softclip_byol",
-        cache_dir=args.vd_cache_dir).to(device).to(torch.float16)
+    vd_pipe =  VersatileDiffusionDualGuidedPipeline.from_pretrained(vd_cache_dir).to(gpu_1).to(torch.float16)
 except:
-    print("Downloading Versatile Diffusion to", args.vd_cache_dir)
+    print("Downloading Versatile Diffusion to", vd_cache_dir)
     vd_pipe =  VersatileDiffusionDualGuidedPipeline.from_pretrained(
             "shi-labs/versatile-diffusion",
-            cache_dir = args.vd_cache_dir).to(device).to(torch.float16)
+            cache_dir = vd_cache_dir).to(gpu_1).to(torch.float16)
 vd_pipe.image_unet.eval()
 vd_pipe.vae.eval()
 vd_pipe.image_unet.requires_grad_(False)
@@ -197,17 +204,17 @@ for name, module in vd_pipe.image_unet.named_modules():
 
 unet = vd_pipe.image_unet
 vae = vd_pipe.vae
-noise_scheduler = vd_pipe.scheduler
-# noise_scheduler = None
+# noise_scheduler = vd_pipe.scheduler
+noise_scheduler = None
 
 # %% [markdown]
 # ## Load Versatile Diffusion model
 
 # %%
 out_dim = 257 * 768
-clip_extractor = Clipper("ViT-L/14", hidden_state=True, norm_embs=True, device=device)
+clip_extractor = Clipper("ViT-L/14", hidden_state=True, norm_embs=True, device=cpu)
 voxel2clip_kwargs = dict(in_dim=num_voxels,out_dim=out_dim)
-voxel2clip = BrainNetwork(**voxel2clip_kwargs)
+voxel2clip = BrainNetwork(**voxel2clip_kwargs, device=gpu_1).to(gpu_1)
 voxel2clip.requires_grad_(False)
 voxel2clip.eval()
 
@@ -224,7 +231,7 @@ prior_network = VersatileDiffusionPriorNetwork(
         heads=heads,
         causal=False,
         learned_query_mode="pos_emb"
-    )
+    ).to(gpu_1)
 
 diffusion_prior = BrainDiffusionPrior(
     net=prior_network,
@@ -234,19 +241,21 @@ diffusion_prior = BrainDiffusionPrior(
     cond_drop_prob=0.2,
     image_embed_scale=None,
     voxel2clip=voxel2clip,
-)
+).to(gpu_2)
+
 
 outdir = os.path.join(dirs.MODELS_HOME, model_name) # f'../train_logs/{model_name}'
+# outdir = f'../train_logs/{model_name}'
 ckpt_path = os.path.join(outdir, f'last.pth')
 
-checkpoint = torch.load(ckpt_path, map_location=device)
+checkpoint = torch.load(ckpt_path, map_location=gpu_2)
 state_dict = checkpoint['model_state_dict']
 print("EPOCH: ",checkpoint['epoch'])
 diffusion_prior.load_state_dict(state_dict,strict=False)
-diffusion_prior.eval().to(device)
-# prior_network.eval().to(gpu_1)
-# prior_network.device = gpu_1
-# voxel2clip.eval().to(gpu_1)
+diffusion_prior.eval().to(gpu_2)
+prior_network.eval().to(gpu_1)
+prior_network.device = gpu_1
+voxel2clip.eval().to(gpu_1)
 pass
 
 # %% [markdown]
@@ -308,16 +317,6 @@ img_variations = False
 # # Reconstruct one-at-a-time
 
 # %%
-# Setting...
-# plotting = True
-# ind_include = [0]
-# saving = False
-
-# %%
-vd_pipe = vd_pipe.to(torch.float32)
-unet = unet.to(torch.float32)
-vae = vae.to(torch.float32)
-
 print(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 retrieve = False
@@ -331,8 +330,7 @@ if img_variations:
 else:
     guidance_scale = 3.5
     
-ind_include = list(range(num_val))
-for i in [93, 107]: ind_include.remove(i)
+ind_include = np.arange(num_val)
 all_brain_recons = None
     
 only_lowlevel = False
@@ -347,13 +345,13 @@ else:
 for val_i, (voxel, img, coco) in enumerate(tqdm(val_dl,total=len(ind_include))):
     if val_i<np.min(ind_include):
         continue
-    voxel = torch.mean(voxel,axis=1).to(device)
-    # voxel = voxel[:,0].to(device)
+    voxel = torch.mean(voxel,axis=1).to(gpu_1)
+    # voxel = voxel[:,0].to(gpu_1)
     
     with torch.no_grad():
         if img2img:
             ae_preds = voxel2sd(voxel.float())
-            blurry_recons = vd_pipe.vae.decode(ae_preds.to(device).half()/0.18215).sample / 2 + 0.5
+            blurry_recons = vd_pipe.vae.decode(ae_preds.to(gpu_1).half()/0.18215).sample / 2 + 0.5
 
             if val_i==0:
                 plt.imshow(utils.torch_to_Image(blurry_recons))
@@ -373,7 +371,7 @@ for val_i, (voxel, img, coco) in enumerate(tqdm(val_dl,total=len(ind_include))):
                 img_lowlevel = blurry_recons,
                 num_inference_steps = num_inference_steps,
                 n_samples_save = batch_size,
-                recons_per_sample = args.recons_per_sample,
+                recons_per_sample = recons_per_sample,
                 guidance_scale = guidance_scale,
                 img2img_strength = img2img_strength, # 0=fully rely on img_lowlevel, 1=not doing img2img
                 timesteps_prior = 100,
@@ -400,17 +398,16 @@ for val_i, (voxel, img, coco) in enumerate(tqdm(val_dl,total=len(ind_include))):
     if val_i>=np.max(ind_include):
         break
 
-    # break # ADDED TO NOT BE STUCK IN THE FOR LOOP
+    break # ADDED TO NOT BE STUCK IN THE FOR LOOP
 
 # %%
 all_brain_recons = all_brain_recons.view(-1,3,imsize,imsize)
 print(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 if saving:
-    torch.save(all_images, os.path.join(dirs.RESULTS_HOME, 'all_images.pt'))
-    torch.save(all_brain_recons, 
-               os.path.join(dirs.RESULTS_HOME, 
-                            f'{args.model_name}_recons_img2img{img2img_strength}_{args.recons_per_sample}samples.pt'))
+    torch.save(all_images,f'all_images.pt')
+    torch.save(all_brain_recons,f'{model_name}_recons_img2img{img2img_strength}_{recons_per_sample}samples.pt')
+print(f'recon_path: {model_name}_recons_img2img{img2img_strength}_{recons_per_sample}samples')
 
 if not utils.is_interactive():
     sys.exit(0)
